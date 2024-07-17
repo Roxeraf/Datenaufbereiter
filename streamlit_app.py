@@ -8,12 +8,11 @@ import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from openai import OpenAI
-
-client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 from datetime import datetime, timedelta, date
 import io
 
-# Set up OpenAI API (make sure to use your API key)
+# Set up OpenAI API
+client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 
 # Load data
 @st.cache_data
@@ -25,21 +24,28 @@ def load_data():
 # Get LLM guidance
 def get_llm_guidance(prompt):
     try:
-        response = client.chat.completions.create(model="gpt-3.5-turbo",
-        messages=[
-            {"role": "system", "content": "You are a helpful assistant guiding users through data analysis."},
-            {"role": "user", "content": prompt}
-        ])
+        response = client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": "You are a helpful assistant guiding users through data analysis."},
+                {"role": "user", "content": prompt}
+            ]
+        )
         return response.choices[0].message.content
     except Exception as e:
         return f"An error occurred: {str(e)}"
 
-# Determine the correct datetime format for the weather data
-prompt = """
-Given the following example datetime string from the weather data: "2024-03-16 11:10:56",
-please provide the correct datetime format string that can be used to parse this datetime string using Python's pandas library.
-"""
-datetime_format = get_llm_guidance(prompt).strip()
+# Function to train the model
+def train_model(X, y):
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X)
+
+    X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=0.2, random_state=42)
+    model = RandomForestRegressor(n_estimators=100, random_state=42)
+    model.fit(X_train, y_train)
+    score = model.score(X_test, y_test)
+
+    return model, scaler, score
 
 # Streamlit app
 st.title('Manufacturing Process Analysis')
@@ -56,17 +62,15 @@ weather_datetime_col = 'dtVar01_pddb_rxxs'
 st.write("First few rows of weather data:")
 st.write(weather_data.head())
 
-# Preprocess weather data to split datetime column
+# Preprocess weather data
 try:
-    weather_data['Date'] = pd.to_datetime(weather_data[weather_datetime_col], format=datetime_format).dt.date
-    weather_data['Time'] = pd.to_datetime(weather_data[weather_datetime_col], format=datetime_format).dt.time
+    weather_data['DateTime'] = pd.to_datetime(weather_data[weather_datetime_col])
 except Exception as e:
     st.error(f"Error processing weather datetime column: {e}")
 
-# Preprocess quality data to combine date and time columns
+# Preprocess quality data
 try:
     quality_data['DateTime'] = pd.to_datetime(quality_data[quality_date_col].astype(str) + ' ' + quality_data[quality_time_col].astype(str), errors='coerce')
-    weather_data['DateTime'] = pd.to_datetime(weather_data['Date'].astype(str) + ' ' + weather_data['Time'].astype(str), errors='coerce')
 except Exception as e:
     st.error(f"Error processing quality datetime columns: {e}")
 
@@ -74,11 +78,19 @@ except Exception as e:
 quality_data = quality_data.dropna(subset=['DateTime'])
 weather_data = weather_data.dropna(subset=['DateTime'])
 
+# Ensure both DataFrames have DateTime as datetime type
+weather_data['DateTime'] = pd.to_datetime(weather_data['DateTime'])
+quality_data['DateTime'] = pd.to_datetime(quality_data['DateTime'])
+
+# Sort both DataFrames by DateTime
+weather_data = weather_data.sort_values('DateTime')
+quality_data = quality_data.sort_values('DateTime')
+
 # Initialize session state for time frame selection
 if 'start_date' not in st.session_state:
-    st.session_state['start_date'] = pd.to_datetime(weather_data['DateTime'].min()).date()
+    st.session_state['start_date'] = weather_data['DateTime'].min().date()
 if 'end_date' not in st.session_state:
-    st.session_state['end_date'] = pd.to_datetime(weather_data['DateTime'].max()).date()
+    st.session_state['end_date'] = weather_data['DateTime'].max().date()
 
 # Ensure session state values are date objects
 if isinstance(st.session_state['start_date'], str):
@@ -96,16 +108,18 @@ st.session_state['start_date'] = start_date
 st.session_state['end_date'] = end_date
 
 # Filter data based on selected time frame
-weather_data = weather_data[(weather_data['DateTime'] >= pd.to_datetime(st.session_state['start_date'])) & 
-                            (weather_data['DateTime'] <= pd.to_datetime(st.session_state['end_date']))]
-quality_data = quality_data[(quality_data['DateTime'] >= pd.to_datetime(st.session_state['start_date'])) & 
-                            (quality_data['DateTime'] <= pd.to_datetime(st.session_state['end_date']))]
+weather_data = weather_data[(weather_data['DateTime'].dt.date >= st.session_state['start_date']) & 
+                            (weather_data['DateTime'].dt.date <= st.session_state['end_date'])]
+quality_data = quality_data[(quality_data['DateTime'].dt.date >= st.session_state['start_date']) & 
+                            (quality_data['DateTime'].dt.date <= st.session_state['end_date'])]
 
 # Merge data on nearest timestamp
-merged_data = pd.merge_asof(weather_data.sort_values('DateTime'), 
-                            quality_data.sort_values('DateTime'), 
-                            on='DateTime', 
-                            direction='nearest')
+merged_data = pd.merge_asof(weather_data, quality_data, on='DateTime', direction='nearest')
+
+st.write("Data preprocessing completed.")
+st.write(f"Weather data shape: {weather_data.shape}")
+st.write(f"Quality data shape: {quality_data.shape}")
+st.write(f"Merged data shape: {merged_data.shape}")
 
 st.write("First few rows of merged data:")
 st.write(merged_data.head())
@@ -167,15 +181,3 @@ if st.sidebar.button('Process Data'):
             st.write(explanation)
     else:
         st.write("Please select features and a target variable to begin the analysis.")
-
-# Function to train the model
-def train_model(X, y):
-    scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X)
-
-    X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=0.2, random_state=42)
-    model = RandomForestRegressor(n_estimators=100, random_state=42)
-    model.fit(X_train, y_train)
-    score = model.score(X_test, y_test)
-
-    return model, scaler, score
