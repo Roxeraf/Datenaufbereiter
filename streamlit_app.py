@@ -142,5 +142,14 @@ if st.button('Process Data'):
 
     else:
         st.write("Please select features and a target variable to begin the analysis.")
+# Funktion zum Trainieren des Modells
+def train_model(X, y):
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X)
 
-# ... [rest of the code remains the same] ...
+    X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=0.2, random_state=42)
+    model = RandomForestRegressor(n_estimators=100, random_state=42)
+    model.fit(X_train, y_train)
+    score = model.score(X_test, y_test)
+
+    return model, scaler, score
