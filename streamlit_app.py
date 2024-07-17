@@ -1,54 +1,84 @@
 import streamlit as st
 import pandas as pd
-import io
+import numpy as np
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.preprocessing import StandardScaler
+import plotly.express as px
 
-def parse_data(data):
-    # Teile die Daten in Zeilen
-    lines = data.strip().split('\n')
-    
-    # Die erste Zeile enthält die Spaltenüberschriften
-    headers = lines[0].split(',')
-    
-    # Parse die restlichen Zeilen
-    rows = []
-    for line in lines[1:]:
-        # Teile jede Zeile an den Leerzeichen, aber behalte das Datum/Zeit zusammen
-        parts = line.split(' ', 2)
-        date_time = f"{parts[0]} {parts[1]}"
-        values = parts[2].split(',')
-        row = [date_time] + values
-        rows.append(row)
-    
-    # Erstelle ein DataFrame
-    df = pd.DataFrame(rows, columns=headers)
+# Funktion zum Laden und Vorverarbeiten der Daten
+def load_and_preprocess_data(file):
+    df = pd.read_csv(file)
     return df
 
-st.title("File to Excel Parser")
-
-uploaded_file = st.file_uploader("Upload a file", type=["txt", "csv"])
-
-if uploaded_file:
-    # Lese den Inhalt der Datei
-    content = uploaded_file.getvalue().decode('utf-8')
+# Funktion zum Trainieren des Modells
+def train_model(X, y):
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    scaler = StandardScaler()
+    X_train_scaled = scaler.fit_transform(X_train)
+    X_test_scaled = scaler.transform(X_test)
     
-    try:
-        # Parse die Daten
-        df = parse_data(content)
-        
-        st.write("Parsed Data:")
-        st.dataframe(df)
+    model = RandomForestRegressor(n_estimators=100, random_state=42)
+    model.fit(X_train_scaled, y_train)
+    
+    return model, scaler, X_test_scaled, y_test
 
-        # Option zum Herunterladen der aufbereiteten Daten als Excel-Datei
-        output = io.BytesIO()
-        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            df.to_excel(writer, index=False, sheet_name='Sheet1')
-        output.seek(0)
-        
-        st.download_button(
-            label="Download as Excel",
-            data=output,
-            file_name='parsed_data.xlsx',
-            mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-        )
-    except Exception as e:
-        st.error(f"Ein Fehler ist aufgetreten: {e}")
+# Funktion zur Analyse der Merkmalswichtigkeit
+def analyze_feature_importance(model, feature_names):
+    importances = model.feature_importances_
+    feature_importance = pd.DataFrame({'feature': feature_names, 'importance': importances})
+    feature_importance = feature_importance.sort_values('importance', ascending=False)
+    return feature_importance
+
+# Streamlit App
+st.title('Prozessverbesserung mit ML')
+
+uploaded_file = st.file_uploader("Laden Sie Ihre CSV-Datei hoch", type="csv")
+
+if uploaded_file is not None:
+    data = load_and_preprocess_data(uploaded_file)
+    st.write("Daten geladen. Form:", data.shape)
+
+    # Auswahl der Zielvariable
+    target_variable = st.selectbox("Wählen Sie die Zielvariable", data.columns)
+
+    # Auswahl der Eingabevariablen
+    feature_cols = st.multiselect("Wählen Sie die Eingabevariablen", 
+                                  [col for col in data.columns if col != target_variable])
+
+    if st.button('Modell trainieren und analysieren'):
+        X = data[feature_cols]
+        y = data[target_variable]
+
+        model, scaler, X_test_scaled, y_test = train_model(X, y)
+
+        # Modellbewertung
+        score = model.score(X_test_scaled, y_test)
+        st.write(f"Modell R²-Score: {score:.2f}")
+
+        # Merkmalswichtigkeit
+        feature_importance = analyze_feature_importance(model, feature_cols)
+        fig = px.bar(feature_importance, x='importance', y='feature', orientation='h',
+                     title='Merkmalswichtigkeit')
+        st.plotly_chart(fig)
+
+        # Verbesserungsvorschläge
+        st.subheader("Verbesserungsvorschläge:")
+        top_features = feature_importance.head(3)['feature'].tolist()
+        for feature in top_features:
+            st.write(f"- Fokussieren Sie sich auf die Optimierung von '{feature}', da es einen starken Einfluss auf {target_variable} hat.")
+
+        # Partial Dependence Plot für das wichtigste Merkmal
+        top_feature = feature_importance.iloc[0]['feature']
+        pdp_feature = st.selectbox("Wählen Sie ein Merkmal für den Partial Dependence Plot", 
+                                   [top_feature] + feature_cols)
+        from sklearn.inspection import partial_dependence
+        pdp = partial_dependence(model, X, [list(X.columns).index(pdp_feature)])
+        fig_pdp = px.line(x=pdp[1][0], y=pdp[0][0], 
+                          labels={'x': pdp_feature, 'y': f'Partial dependence on {target_variable}'})
+        st.plotly_chart(fig_pdp)
+
+        st.write(f"Der Partial Dependence Plot zeigt, wie sich Änderungen in '{pdp_feature}' auf '{target_variable}' auswirken.")
+
+else:
+    st.write("Bitte laden Sie eine CSV-Datei hoch, um zu beginnen.")
