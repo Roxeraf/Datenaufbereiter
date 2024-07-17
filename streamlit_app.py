@@ -7,13 +7,12 @@ from sklearn.preprocessing import StandardScaler
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from openai import OpenAI
-
-client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
+import openai
 from datetime import datetime, timedelta, date
 import io
 
 # Set up OpenAI API (make sure to use your API key)
+openai.api_key = st.secrets["OPENAI_API_KEY"]
 
 # Load data
 @st.cache_data
@@ -25,12 +24,14 @@ def load_data():
 # Get LLM guidance
 def get_llm_guidance(prompt):
     try:
-        response = client.chat.completions.create(model="gpt-3.5-turbo",
-        messages=[
-            {"role": "system", "content": "You are a helpful assistant guiding users through data analysis."},
-            {"role": "user", "content": prompt}
-        ])
-        return response.choices[0].message.content
+        response = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": "You are a helpful assistant guiding users through data analysis."},
+                {"role": "user", "content": prompt}
+            ]
+        )
+        return response.choices[0].message['content']
     except Exception as e:
         return f"An error occurred: {str(e)}"
 
@@ -40,40 +41,30 @@ st.title('Manufacturing Process Analysis')
 # Load data
 quality_data, weather_data = load_data()
 
+# Set column names for quality data and weather data
+quality_date_col = 'Angelegt am'
+quality_time_col = 'Uhrzeit'
+weather_datetime_col = 'dtVar01_pddb_rxxs'
+
 # Display data info
 st.subheader("Quality Data Columns")
 st.write(quality_data.columns.tolist())
 st.subheader("Weather Data Columns")
 st.write(weather_data.columns.tolist())
 
-# LLM guidance for column selection
-guidance_prompt = f"""
-Given the following column names for quality and weather data, please ask the user to identify the correct columns for date and time (or datetime if combined).
+# Preprocess data
+quality_data['DateTime'] = pd.to_datetime(quality_data[quality_date_col].astype(str) + ' ' + quality_data[quality_time_col].astype(str), errors='coerce')
+weather_data['DateTime'] = pd.to_datetime(weather_data[weather_datetime_col], errors='coerce')
 
-Quality Data Columns: {quality_data.columns.tolist()}
-Weather Data Columns: {weather_data.columns.tolist()}
-
-Please formulate questions to ask the user about:
-1. Which column in the quality data represents the date?
-2. Which column in the quality data represents the time?
-3. Which column in the weather data represents the datetime?
-
-Format your response as questions that can be directly presented to the user.
-"""
-
-guidance = get_llm_guidance(guidance_prompt)
-st.write(guidance)
-
-# User input based on LLM guidance
-quality_date_col = st.selectbox("Select the column name for date in quality data:", quality_data.columns)
-quality_time_col = st.selectbox("Select the column name for time in quality data:", quality_data.columns)
-weather_datetime_col = st.selectbox("Select the column name for datetime in weather data:", weather_data.columns)
+# Remove rows with NaT values in DateTime columns
+quality_data = quality_data.dropna(subset=['DateTime'])
+weather_data = weather_data.dropna(subset=['DateTime'])
 
 # Initialize session state for time frame selection
 if 'start_date' not in st.session_state:
-    st.session_state['start_date'] = pd.to_datetime(weather_data[weather_datetime_col].min()).date()
+    st.session_state['start_date'] = pd.to_datetime(weather_data['DateTime'].min()).date()
 if 'end_date' not in st.session_state:
-    st.session_state['end_date'] = pd.to_datetime(weather_data[weather_datetime_col].max()).date()
+    st.session_state['end_date'] = pd.to_datetime(weather_data['DateTime'].max()).date()
 
 # Ensure session state values are date objects
 if isinstance(st.session_state['start_date'], str):
@@ -90,6 +81,27 @@ end_date = st.sidebar.date_input('End Date', st.session_state['end_date'])
 st.session_state['start_date'] = start_date
 st.session_state['end_date'] = end_date
 
+# Filter data based on selected time frame
+weather_data = weather_data[(weather_data['DateTime'] >= pd.to_datetime(st.session_state['start_date'])) & 
+                            (weather_data['DateTime'] <= pd.to_datetime(st.session_state['end_date']))]
+quality_data = quality_data[(quality_data['DateTime'] >= pd.to_datetime(st.session_state['start_date'])) & 
+                            (quality_data['DateTime'] <= pd.to_datetime(st.session_state['end_date']))]
+
+# Merge data on nearest timestamp
+merged_data = pd.merge_asof(weather_data.sort_values('DateTime'), 
+                            quality_data.sort_values('DateTime'), 
+                            on='DateTime', 
+                            direction='nearest')
+
+st.write("First few rows of merged data:")
+st.write(merged_data.head())
+
+# Displaying DataFrame info in a text format to avoid BrokenPipeError
+buffer = io.StringIO()
+merged_data.info(buf=buffer)
+s = buffer.getvalue()
+st.text(s)
+
 # Select features and target
 st.sidebar.header('Feature Selection')
 feature_cols = st.sidebar.multiselect('Select features', quality_data.columns)
@@ -97,52 +109,23 @@ target_col = st.sidebar.selectbox('Select target variable', quality_data.columns
 
 # Process Data button
 if st.sidebar.button('Process Data'):
-    # Preprocess data
-    quality_data['DateTime'] = pd.to_datetime(quality_data[quality_date_col].astype(str) + ' ' + quality_data[quality_time_col].astype(str), errors='coerce')
-    weather_data['DateTime'] = pd.to_datetime(weather_data[weather_datetime_col], errors='coerce')
-
-    # Remove rows with NaT values in DateTime columns
-    quality_data = quality_data.dropna(subset=['DateTime'])
-    weather_data = weather_data.dropna(subset=['DateTime'])
-
-    # Filter data based on selected time frame
-    weather_data = weather_data[(weather_data['DateTime'] >= pd.to_datetime(st.session_state['start_date'])) & 
-                                (weather_data['DateTime'] <= pd.to_datetime(st.session_state['end_date']))]
-    quality_data = quality_data[(quality_data['DateTime'] >= pd.to_datetime(st.session_state['start_date'])) & 
-                                (quality_data['DateTime'] <= pd.to_datetime(st.session_state['end_date']))]
-
-    # Merge data on nearest timestamp
-    merged_data = pd.merge_asof(weather_data.sort_values('DateTime'), 
-                                quality_data.sort_values('DateTime'), 
-                                on='DateTime', 
-                                direction='nearest')
-
-    st.write("First few rows of merged data:")
-    st.write(merged_data.head())
-
-    # Displaying DataFrame info in a text format to avoid BrokenPipeError
-    buffer = io.StringIO()
-    merged_data.info(buf=buffer)
-    s = buffer.getvalue()
-    st.text(s)
-
     if feature_cols and target_col:
         X = merged_data[feature_cols]
         y = merged_data[target_col]
-
+        
         # Train model
         model, scaler, score = train_model(X, y)
-
+        
         st.write(f"Model R² Score: {score:.2f}")
-
+        
         # Feature importance
         importance = model.feature_importances_
         feat_importance = pd.DataFrame({'feature': feature_cols, 'importance': importance})
         feat_importance = feat_importance.sort_values('importance', ascending=False)
-
+        
         fig = px.bar(feat_importance, x='feature', y='importance', title='Feature Importance')
         st.plotly_chart(fig)
-
+        
         # Time series plot
         fig = make_subplots(specs=[[{"secondary_y": True}]])
         fig.add_trace(go.Scatter(x=merged_data['DateTime'], y=merged_data[target_col], name=target_col))
@@ -150,7 +133,7 @@ if st.sidebar.button('Process Data'):
             fig.add_trace(go.Scatter(x=merged_data['DateTime'], y=merged_data[feature], name=feature, visible='legendonly'))
         fig.update_layout(title=f'{target_col} and Selected Features Over Time')
         st.plotly_chart(fig)
-
+        
         # LLM explanation
         st.header("Ask for Explanation")
         user_question = st.text_input("What would you like to know about the analysis?")
@@ -171,7 +154,7 @@ if st.sidebar.button('Process Data'):
     else:
         st.write("Please select features and a target variable to begin the analysis.")
 
-# Funktion zum Trainieren des Modells
+# Function to train the model
 def train_model(X, y):
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)
