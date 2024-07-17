@@ -46,15 +46,13 @@ quality_date_col = 'Angelegt am'
 quality_time_col = 'Uhrzeit'
 weather_datetime_col = 'dtVar01_pddb_rxxs'
 
-# Display data info
-st.subheader("Quality Data Columns")
-st.write(quality_data.columns.tolist())
-st.subheader("Weather Data Columns")
-st.write(weather_data.columns.tolist())
+# Preprocess weather data to split datetime column
+weather_data['Date'] = pd.to_datetime(weather_data[weather_datetime_col]).dt.date
+weather_data['Time'] = pd.to_datetime(weather_data[weather_datetime_col]).dt.time
 
-# Preprocess data
+# Preprocess quality data to combine date and time columns
 quality_data['DateTime'] = pd.to_datetime(quality_data[quality_date_col].astype(str) + ' ' + quality_data[quality_time_col].astype(str), errors='coerce')
-weather_data['DateTime'] = pd.to_datetime(weather_data[weather_datetime_col], errors='coerce')
+weather_data['DateTime'] = pd.to_datetime(weather_data['Date'].astype(str) + ' ' + weather_data['Time'].astype(str), errors='coerce')
 
 # Remove rows with NaT values in DateTime columns
 quality_data = quality_data.dropna(subset=['DateTime'])
@@ -104,8 +102,8 @@ st.text(s)
 
 # Select features and target
 st.sidebar.header('Feature Selection')
-feature_cols = st.sidebar.multiselect('Select features', quality_data.columns)
-target_col = st.sidebar.selectbox('Select target variable', quality_data.columns)
+feature_cols = st.sidebar.multiselect('Select features', merged_data.columns)
+target_col = st.sidebar.selectbox('Select target variable', merged_data.columns)
 
 # Process Data button
 if st.sidebar.button('Process Data'):
@@ -165,5 +163,3 @@ def train_model(X, y):
     score = model.score(X_test, y_test)
 
     return model, scaler, score
-
-
