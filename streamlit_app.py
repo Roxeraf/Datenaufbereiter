@@ -63,14 +63,14 @@ def get_llm_explanation(prompt):
 # Streamlit app
 st.title('Manufacturing Process Analysis')
 
-# Load data
+# Load and preprocess data
 quality_data, weather_data = load_data()
 merged_data = preprocess_data(quality_data, weather_data)
 
 # Time frame selection
 st.sidebar.header('Time Frame Selection')
-start_date = st.sidebar.date_input('Start Date', merged_data['DateTime'].min())
-end_date = st.sidebar.date_input('End Date', merged_data['DateTime'].max())
+start_date = st.sidebar.date_input('Start Date', merged_data['DateTime'].min().date())
+end_date = st.sidebar.date_input('End Date', merged_data['DateTime'].max().date())
 
 # Filter data based on selected time frame
 filtered_data = merged_data[(merged_data['DateTime'].dt.date >= start_date) & 
