@@ -2,17 +2,20 @@ import streamlit as st
 import pandas as pd
 import json
 
-def parse_json_column(df, json_column):
-    # Funktion zum sicheren Parsen von JSON-Strings in einer Spalte
+def parse_json_columns(df, json_columns):
+    # Funktion zum sicheren Parsen von JSON-Strings in mehreren Spalten
     def try_loads(x):
         try:
             return json.loads(x)
         except (TypeError, json.JSONDecodeError):
             return None
-
-    parsed_data = df[json_column].apply(try_loads)
-    json_df = pd.json_normalize(parsed_data.dropna())
-    return pd.concat([df.drop(columns=[json_column]), json_df], axis=1)
+    
+    for json_column in json_columns:
+        parsed_data = df[json_column].apply(try_loads)
+        json_df = pd.json_normalize(parsed_data.dropna())
+        df = pd.concat([df.drop(columns=[json_column]), json_df], axis=1)
+    
+    return df
 
 st.title("File to JSON Parser")
 
@@ -32,11 +35,11 @@ if uploaded_file:
     st.write("Original Data:")
     st.dataframe(df)
 
-    json_column = st.selectbox("Select JSON column", df.columns)
+    json_columns = st.multiselect("Select JSON columns", df.columns)
 
-    if st.button("Parse JSON Column"):
+    if st.button("Parse JSON Columns"):
         try:
-            parsed_df = parse_json_column(df, json_column)
+            parsed_df = parse_json_columns(df, json_columns)
             st.write("Parsed Data:")
             st.dataframe(parsed_df)
 
