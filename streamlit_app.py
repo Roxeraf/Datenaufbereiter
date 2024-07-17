@@ -46,13 +46,23 @@ quality_date_col = 'Angelegt am'
 quality_time_col = 'Uhrzeit'
 weather_datetime_col = 'dtVar01_pddb_rxxs'
 
+# Display first few rows of the weather data to check the datetime format
+st.write("First few rows of weather data:")
+st.write(weather_data.head())
+
 # Preprocess weather data to split datetime column
-weather_data['Date'] = pd.to_datetime(weather_data[weather_datetime_col]).dt.date
-weather_data['Time'] = pd.to_datetime(weather_data[weather_datetime_col]).dt.time
+try:
+    weather_data['Date'] = pd.to_datetime(weather_data[weather_datetime_col]).dt.date
+    weather_data['Time'] = pd.to_datetime(weather_data[weather_datetime_col]).dt.time
+except Exception as e:
+    st.error(f"Error processing weather datetime column: {e}")
 
 # Preprocess quality data to combine date and time columns
-quality_data['DateTime'] = pd.to_datetime(quality_data[quality_date_col].astype(str) + ' ' + quality_data[quality_time_col].astype(str), errors='coerce')
-weather_data['DateTime'] = pd.to_datetime(weather_data['Date'].astype(str) + ' ' + weather_data['Time'].astype(str), errors='coerce')
+try:
+    quality_data['DateTime'] = pd.to_datetime(quality_data[quality_date_col].astype(str) + ' ' + quality_data[quality_time_col].astype(str), errors='coerce')
+    weather_data['DateTime'] = pd.to_datetime(weather_data['Date'].astype(str) + ' ' + weather_data['Time'].astype(str), errors='coerce')
+except Exception as e:
+    st.error(f"Error processing quality datetime columns: {e}")
 
 # Remove rows with NaT values in DateTime columns
 quality_data = quality_data.dropna(subset=['DateTime'])
