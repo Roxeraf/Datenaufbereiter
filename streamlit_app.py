@@ -35,6 +35,13 @@ def get_llm_guidance(prompt):
     except Exception as e:
         return f"An error occurred: {str(e)}"
 
+# Determine the correct datetime format for the weather data
+prompt = """
+Given the following example datetime string from the weather data: "2024-03-16 11:10:56",
+please provide the correct datetime format string that can be used to parse this datetime string using Python's pandas library.
+"""
+datetime_format = get_llm_guidance(prompt).strip()
+
 # Streamlit app
 st.title('Manufacturing Process Analysis')
 
@@ -52,8 +59,8 @@ st.write(weather_data.head())
 
 # Preprocess weather data to split datetime column
 try:
-    weather_data['Date'] = pd.to_datetime(weather_data[weather_datetime_col]).dt.date
-    weather_data['Time'] = pd.to_datetime(weather_data[weather_datetime_col]).dt.time
+    weather_data['Date'] = pd.to_datetime(weather_data[weather_datetime_col], format=datetime_format).dt.date
+    weather_data['Time'] = pd.to_datetime(weather_data[weather_datetime_col], format=datetime_format).dt.time
 except Exception as e:
     st.error(f"Error processing weather datetime column: {e}")
 
