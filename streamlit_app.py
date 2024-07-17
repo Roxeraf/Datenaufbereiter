@@ -14,6 +14,14 @@ import io
 # Set up OpenAI API
 openai.api_key = st.secrets["OPENAI_API_KEY"]
 
+# Initialize session state variables
+if 'model_trained' not in st.session_state:
+    st.session_state.model_trained = False
+if 'feature_importance' not in st.session_state:
+    st.session_state.feature_importance = None
+if 'scores' not in st.session_state:
+    st.session_state.scores = None
+
 # Load data
 @st.cache_data
 def load_data():
@@ -130,48 +138,71 @@ merged_data.info(buf=buffer)
 s = buffer.getvalue()
 st.text(s)
 
-# Select features and target
-st.sidebar.header('Feature Selection')
+# Select features and targets
+st.sidebar.header('Feature and Target Selection')
 feature_cols = st.sidebar.multiselect('Select features', merged_data.columns)
-target_col = st.sidebar.selectbox('Select target variable', merged_data.columns)
+target_cols = st.sidebar.multiselect('Select target variables (up to 6)', merged_data.columns, max_selections=6)
 
 # Process Data button
 if st.sidebar.button('Process Data'):
-    if feature_cols and target_col:
+    if feature_cols and target_cols:
         X = merged_data[feature_cols]
-        y = merged_data[target_col]
+        Y = merged_data[target_cols]
 
-        # Train model
-        model, scaler, score = train_model(X, y)
+        st.session_state.models = []
+        st.session_state.scalers = []
+        st.session_state.scores = []
+        st.session_state.feature_importance = pd.DataFrame()
 
-        st.write(f"Model R² Score: {score:.2f}")
+        for target in target_cols:
+            model, scaler, score = train_model(X, Y[target])
+            st.session_state.models.append(model)
+            st.session_state.scalers.append(scaler)
+            st.session_state.scores.append(score)
 
-        # Feature importance
-        importance = model.feature_importances_
-        feat_importance = pd.DataFrame({'feature': feature_cols, 'importance': importance})
-        feat_importance = feat_importance.sort_values('importance', ascending=False)
+            # Feature importance
+            importance = model.feature_importances_
+            temp_df = pd.DataFrame({'feature': feature_cols, f'importance_{target}': importance})
+            if st.session_state.feature_importance.empty:
+                st.session_state.feature_importance = temp_df
+            else:
+                st.session_state.feature_importance = st.session_state.feature_importance.merge(temp_df, on='feature')
 
-        fig = px.bar(feat_importance, x='feature', y='importance', title='Feature Importance')
+        st.session_state.feature_importance['average_importance'] = st.session_state.feature_importance.filter(like='importance_').mean(axis=1)
+        st.session_state.feature_importance = st.session_state.feature_importance.sort_values('average_importance', ascending=False)
+
+        # Display results
+        for target, score in zip(target_cols, st.session_state.scores):
+            st.write(f"Model R² Score for {target}: {score:.2f}")
+
+        fig = px.bar(st.session_state.feature_importance, x='feature', y='average_importance', title='Average Feature Importance')
         st.plotly_chart(fig)
 
-        # Time series plot
-        fig = make_subplots(specs=[[{"secondary_y": True}]])
-        fig.add_trace(go.Scatter(x=merged_data['DateTime'], y=merged_data[target_col], name=target_col))
-        for feature in feature_cols:
-            fig.add_trace(go.Scatter(x=merged_data['DateTime'], y=merged_data[feature], name=feature, visible='legendonly'))
-        fig.update_layout(title=f'{target_col} and Selected Features Over Time')
-        st.plotly_chart(fig)
+        # Time series plots
+        for target in target_cols:
+            fig = make_subplots(specs=[[{"secondary_y": True}]])
+            fig.add_trace(go.Scatter(x=merged_data['DateTime'], y=merged_data[target], name=target))
+            for feature in feature_cols:
+                fig.add_trace(go.Scatter(x=merged_data['DateTime'], y=merged_data[feature], name=feature, visible='legendonly'))
+            fig.update_layout(title=f'{target} and Selected Features Over Time')
+            st.plotly_chart(fig)
 
-        # LLM explanation
-        st.header("Ask for Explanation")
-        user_question = st.text_input("What would you like to know about the analysis?")
-        if user_question:
+        st.session_state.model_trained = True
+    else:
+        st.write("Please select features and at least one target variable to begin the analysis.")
+
+# LLM explanation
+if st.session_state.model_trained:
+    st.header("Ask for Explanation")
+    user_question = st.text_input("What would you like to know about the analysis?")
+    if user_question:
+        try:
             prompt = f"""
             The machine learning model analyzed manufacturing process data with the following results:
-            - Target variable: {target_col}
+            - Target variables: {', '.join(target_cols)}
             - Features used: {', '.join(feature_cols)}
-            - Model R² Score: {score:.2f}
-            - Top important features: {', '.join(feat_importance['feature'].head().tolist())}
+            - Model R² Scores: {', '.join([f"{target}: {score:.2f}" for target, score in zip(target_cols, st.session_state.scores)])}
+            - Top important features: {', '.join(st.session_state.feature_importance['feature'].head().tolist())}
             
             User question: {user_question}
             
@@ -179,5 +210,6 @@ if st.sidebar.button('Process Data'):
             """
             explanation = get_llm_guidance(prompt)
             st.write(explanation)
-    else:
-        st.write("Please select features and a target variable to begin the analysis.")
+        except Exception as e:
+            st.error(f"An error occurred while getting the explanation: {str(e)}")
+            st.write("Please try asking your question again.")
