@@ -139,47 +139,72 @@ if file1 and file2:
             X = merged_data[st.session_state['feature_cols']]
             Y = merged_data[st.session_state['target_variables']]
 
-            models, scalers, scores, importances = train_multioutput_model(X, Y)
+            # Überprüfen und bereinigen der Daten
+            for col in X.columns:
+                if not pd.api.types.is_numeric_dtype(X[col]):
+                    st.warning(f"Die Eingabevariable '{col}' enthält nicht-numerische Werte. Versuche Konvertierung...")
+                    X[col] = pd.to_numeric(X[col], errors='coerce')
+                X[col] = X[col].fillna(X[col].median())
 
-            for target, score in zip(st.session_state['target_variables'], scores):
-                st.write(f"Modell R²-Score für {target}: {score:.2f}")
+            for col in Y.columns:
+                if not pd.api.types.is_numeric_dtype(Y[col]):
+                    st.warning(f"Die Zielvariable '{col}' enthält nicht-numerische Werte. Versuche Konvertierung...")
+                    Y[col] = pd.to_numeric(Y[col], errors='coerce')
+                if Y[col].isnull().any():
+                    st.warning(f"Die Zielvariable '{col}' enthält NaN-Werte. Diese Zeilen werden entfernt.")
+                    valid_indices = Y[col].notnull()
+                    X = X[valid_indices]
+                    Y = Y[valid_indices]
 
-            feature_importance = analyze_feature_importance(importances, st.session_state['feature_cols'], st.session_state['target_variables'])
-            fig = px.bar(feature_importance, x='average_importance', y='feature', orientation='h',
-                         title='Durchschnittliche Merkmalswichtigkeit')
-            st.plotly_chart(fig)
+            st.write("Datenübersicht nach Bereinigung:")
+            st.write(f"Eingabevariablen (X) Form: {X.shape}")
+            st.write(f"Zielvariablen (Y) Form: {Y.shape}")
 
-            st.subheader("Verbesserungsvorschläge:")
-            top_features = feature_importance.head(5)['feature'].tolist()
-            for feature in top_features:
-                st.write(f"- Fokussieren Sie sich auf die Optimierung von '{feature}', da es einen starken Einfluss auf die Zielvariablen hat.")
+            try:
+                models, scalers, scores, importances = train_multioutput_model(X, Y)
 
-            for target, model, scaler in zip(st.session_state['target_variables'], models, scalers):
-                st.subheader(f"Partial Dependence Plot für {target}")
-                top_feature = feature_importance.iloc[0]['feature']
-                pdp_feature = st.selectbox(f"Wählen Sie ein Merkmal für den Partial Dependence Plot ({target})", 
-                                           [top_feature] + st.session_state['feature_cols'])
-                from sklearn.inspection import partial_dependence
-                X_scaled = scaler.transform(X)
-                pdp = partial_dependence(model, X_scaled, [list(X.columns).index(pdp_feature)])
-                fig_pdp = px.line(x=pdp['values'][0], y=pdp['average'][0], 
-                                  labels={'x': pdp_feature, 'y': f'Partial dependence on {target}'})
-                st.plotly_chart(fig_pdp)
+                for target, score in zip(st.session_state['target_variables'], scores):
+                    st.write(f"Modell R²-Score für {target}: {score:.2f}")
 
-                st.write(f"Der Partial Dependence Plot zeigt, wie sich Änderungen in '{pdp_feature}' auf '{target}' auswirken.")
+                feature_importance = analyze_feature_importance(importances, st.session_state['feature_cols'], st.session_state['target_variables'])
+                fig = px.bar(feature_importance, x='average_importance', y='feature', orientation='h',
+                             title='Durchschnittliche Merkmalswichtigkeit')
+                st.plotly_chart(fig)
 
-            output = io.BytesIO()
-            with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                feature_importance.to_excel(writer, index=False, sheet_name='Feature Importance')
-                merged_data.to_excel(writer, index=False, sheet_name='Merged Data')
-            output.seek(0)
-            
-            st.download_button(
-                label="Download Ergebnisse als Excel",
-                data=output,
-                file_name="analysis_results.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
+                st.subheader("Verbesserungsvorschläge:")
+                top_features = feature_importance.head(5)['feature'].tolist()
+                for feature in top_features:
+                    st.write(f"- Fokussieren Sie sich auf die Optimierung von '{feature}', da es einen starken Einfluss auf die Zielvariablen hat.")
+
+                for target, model, scaler in zip(st.session_state['target_variables'], models, scalers):
+                    st.subheader(f"Partial Dependence Plot für {target}")
+                    top_feature = feature_importance.iloc[0]['feature']
+                    pdp_feature = st.selectbox(f"Wählen Sie ein Merkmal für den Partial Dependence Plot ({target})", 
+                                               [top_feature] + st.session_state['feature_cols'])
+                    from sklearn.inspection import partial_dependence
+                    X_scaled = scaler.transform(X)
+                    pdp = partial_dependence(model, X_scaled, [list(X.columns).index(pdp_feature)])
+                    fig_pdp = px.line(x=pdp['values'][0], y=pdp['average'][0], 
+                                      labels={'x': pdp_feature, 'y': f'Partial dependence on {target}'})
+                    st.plotly_chart(fig_pdp)
+
+                    st.write(f"Der Partial Dependence Plot zeigt, wie sich Änderungen in '{pdp_feature}' auf '{target}' auswirken.")
+
+                output = io.BytesIO()
+                with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                    feature_importance.to_excel(writer, index=False, sheet_name='Feature Importance')
+                    merged_data.to_excel(writer, index=False, sheet_name='Merged Data')
+                output.seek(0)
+                
+                st.download_button(
+                    label="Download Ergebnisse als Excel",
+                    data=output,
+                    file_name="analysis_results.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+            except Exception as e:
+                st.error(f"Ein Fehler ist während der Analyse aufgetreten: {str(e)}")
+                st.write("Bitte überprüfen Sie Ihre Daten und stellen Sie sicher, dass alle ausgewählten Variablen numerisch sind und keine fehlenden Werte enthalten.")
 
 else:
     st.write("Bitte laden Sie beide Dateien hoch, um zu beginnen.")
