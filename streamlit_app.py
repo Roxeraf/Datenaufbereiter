@@ -7,12 +7,12 @@ from sklearn.preprocessing import StandardScaler
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from openai import OpenAI
+import openai
 from datetime import datetime, timedelta, date
 import io
 
 # Set up OpenAI API
-client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
+openai.api_key = st.secrets["OPENAI_API_KEY"]
 
 # Load data
 @st.cache_data
@@ -24,14 +24,14 @@ def load_data():
 # Get LLM guidance
 def get_llm_guidance(prompt):
     try:
-        response = client.chat.completions.create(
+        response = openai.ChatCompletion.create(
             model="gpt-3.5-turbo",
             messages=[
                 {"role": "system", "content": "You are a helpful assistant guiding users through data analysis."},
                 {"role": "user", "content": prompt}
             ]
         )
-        return response.choices[0].message.content
+        return response.choices[0].message['content']
     except Exception as e:
         return f"An error occurred: {str(e)}"
 
