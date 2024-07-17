@@ -3,19 +3,39 @@ import pandas as pd
 import json
 from io import BytesIO
 
-def parse_json_columns(df, json_columns):
-    def try_loads(x):
-        try:
-            return json.loads(x)
-        except (TypeError, json.JSONDecodeError):
-            return None
+def try_loads(x):
+    if isinstance(x, dict):
+        return x
+    try:
+        return json.loads(x)
+    except (TypeError, json.JSONDecodeError):
+        return x
 
+def flatten_json(nested_json, prefix=''):
+    flattened = {}
+    for key, value in nested_json.items():
+        if isinstance(value, dict):
+            flattened.update(flatten_json(value, f"{prefix}{key}."))
+        else:
+            flattened[f"{prefix}{key}"] = value
+    return flattened
+
+def parse_json_columns(df, json_columns):
     for json_column in json_columns:
         parsed_data = df[json_column].apply(try_loads)
-        json_df = pd.json_normalize(parsed_data)
+        flattened_data = parsed_data.apply(lambda x: flatten_json(x) if isinstance(x, dict) else x)
+        json_df = pd.DataFrame(flattened_data.tolist())
         json_df.columns = [f"{json_column}.{col}" for col in json_df.columns]
         df = df.drop(columns=[json_column]).join(json_df)
-    
+    return df
+
+def preserve_dtypes(df):
+    for col in df.columns:
+        if df[col].dtype == 'object':
+            try:
+                df[col] = pd.to_numeric(df[col])
+            except ValueError:
+                pass
     return df
 
 st.title("File to JSON Parser")
@@ -41,6 +61,7 @@ if uploaded_file:
     if st.button("Parse JSON Columns"):
         try:
             parsed_df = parse_json_columns(df, json_columns)
+            parsed_df = preserve_dtypes(parsed_df)
             st.write("Parsed Data:")
             st.dataframe(parsed_df)
 
@@ -52,10 +73,17 @@ if uploaded_file:
             output = BytesIO()
             with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
                 parsed_df.to_excel(writer, index=False, sheet_name='Sheet1')
-                writer.save()
+                workbook = writer.book
+                worksheet = writer.sheets['Sheet1']
+                header_format = workbook.add_format({'bold': True, 'text_wrap': True, 'valign': 'top', 'fg_color': '#D7E4BC', 'border': 1})
+                for col_num, value in enumerate(parsed_df.columns.values):
+                    worksheet.write(0, col_num, value, header_format)
+                worksheet.autofit()
             output.seek(0)
             st.download_button(label="Download as Excel", data=output, file_name='parsed_data.xlsx', mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+        except ValueError as ve:
+            st.error(f"Fehler beim Parsen der JSON-Daten: {ve}")
+        except KeyError as ke:
+            st.error(f"Spalte nicht gefunden: {ke}")
         except Exception as e:
-            st.error(f"An error occurred: {e}")
-
-
+            st.error(f"Ein unerwarteter Fehler ist aufgetreten: {e}")
