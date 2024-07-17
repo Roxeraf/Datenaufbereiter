@@ -10,15 +10,13 @@ def parse_json_columns(df, json_columns):
         except (TypeError, json.JSONDecodeError):
             return None
 
-    parsed_dfs = [df.drop(columns=json_columns)]
     for json_column in json_columns:
         parsed_data = df[json_column].apply(try_loads)
         json_df = pd.json_normalize(parsed_data)
         json_df.columns = [f"{json_column}.{col}" for col in json_df.columns]
-        parsed_dfs.append(json_df)
+        df = df.drop(columns=[json_column]).join(json_df)
     
-    parsed_df = pd.concat(parsed_dfs, axis=1)
-    return parsed_df
+    return df
 
 st.title("File to JSON Parser")
 
@@ -46,7 +44,7 @@ if uploaded_file:
             st.write("Parsed Data:")
             st.dataframe(parsed_df)
 
-            # Option zum Herunterladen der aufbereiteten Daten
+            # Option zum Herunterladen der aufbereiteten Daten als CSV-Datei
             csv = parsed_df.to_csv(index=False).encode('utf-8')
             st.download_button(label="Download as CSV", data=csv, file_name='parsed_data.csv', mime='text/csv')
 
@@ -59,4 +57,5 @@ if uploaded_file:
             st.download_button(label="Download as Excel", data=output, file_name='parsed_data.xlsx', mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
         except Exception as e:
             st.error(f"An error occurred: {e}")
+
 
