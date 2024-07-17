@@ -1,105 +1,128 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-import numpy as np
-from scipy import stats
+import openai
+from datetime import datetime, timedelta
 
-st.set_page_config(page_title="Datenanalyse Dashboard", layout="wide")
+# Set up OpenAI API (make sure to use your API key)
+openai.api_key = st.secrets["OPENAI_API_KEY"]
 
+# Load data
 @st.cache_data
-def load_data(file):
-    return pd.read_excel(file, engine='openpyxl')
+def load_data():
+    quality_data = pd.read_excel("PS1 SERKEM 036 PP53 komplett – Kopie – Kopie.xlsx")
+    weather_data = pd.read_csv("DecTod_Hum.csv")
+    return quality_data, weather_data
 
-def display_nan_info(df):
-    nan_counts = df.isna().sum()
-    nan_percentages = (nan_counts / len(df)) * 100
-    nan_info = pd.DataFrame({
-        'NaN Count': nan_counts,
-        'NaN Percentage': nan_percentages
-    })
-    nan_info = nan_info[nan_info['NaN Count'] > 0].sort_values('NaN Count', ascending=False)
-    return nan_info
+# Preprocess data
+def preprocess_data(quality_data, weather_data):
+    # Combine date and time for quality data
+    quality_data['DateTime'] = pd.to_datetime(quality_data['Datum'].astype(str) + ' ' + quality_data['Zeit'].astype(str))
+    
+    # Convert weather data timestamp
+    weather_data['DateTime'] = pd.to_datetime(weather_data['DateTime'])
+    
+    # Merge data on nearest timestamp
+    merged_data = pd.merge_asof(weather_data.sort_values('DateTime'), 
+                                quality_data.sort_values('DateTime'), 
+                                on='DateTime', 
+                                direction='nearest')
+    
+    return merged_data
 
-st.title('Datenanalyse Dashboard für Temperatur, Luftfeuchtigkeit und Qualität')
+# Train ML model
+def train_model(X, y):
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    scaler = StandardScaler()
+    X_train_scaled = scaler.fit_transform(X_train)
+    X_test_scaled = scaler.transform(X_test)
+    model = RandomForestRegressor(n_estimators=100, random_state=42)
+    model.fit(X_train_scaled, y_train)
+    return model, scaler, model.score(X_test_scaled, y_test)
 
-uploaded_file = st.file_uploader("Laden Sie Ihre Excel-Datei hoch", type="xlsx")
+# Get LLM explanation
+def get_llm_explanation(prompt):
+    try:
+        response = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": "You are a helpful assistant that explains data analysis results."},
+                {"role": "user", "content": prompt}
+            ]
+        )
+        return response.choices[0].message['content']
+    except Exception as e:
+        return f"An error occurred: {str(e)}"
 
-if uploaded_file is not None:
-    data = load_data(uploaded_file)
-    st.write("Daten erfolgreich geladen. Form:", data.shape)
+# Streamlit app
+st.title('Manufacturing Process Analysis')
 
-    # NaN-Informationen anzeigen
-    st.subheader("NaN-Werte in den Daten")
-    nan_info = display_nan_info(data)
-    if not nan_info.empty:
-        st.write(nan_info)
+# Load data
+quality_data, weather_data = load_data()
+merged_data = preprocess_data(quality_data, weather_data)
+
+# Time frame selection
+st.sidebar.header('Time Frame Selection')
+start_date = st.sidebar.date_input('Start Date', merged_data['DateTime'].min())
+end_date = st.sidebar.date_input('End Date', merged_data['DateTime'].max())
+
+# Filter data based on selected time frame
+filtered_data = merged_data[(merged_data['DateTime'].dt.date >= start_date) & 
+                            (merged_data['DateTime'].dt.date <= end_date)]
+
+# Select features and target
+st.sidebar.header('Feature Selection')
+feature_cols = st.sidebar.multiselect('Select features', merged_data.columns)
+target_col = st.sidebar.selectbox('Select target variable', merged_data.columns)
+
+if feature_cols and target_col:
+    X = filtered_data[feature_cols]
+    y = filtered_data[target_col]
+    
+    # Train model
+    model, scaler, score = train_model(X, y)
+    
+    st.write(f"Model R² Score: {score:.2f}")
+    
+    # Feature importance
+    importance = model.feature_importances_
+    feat_importance = pd.DataFrame({'feature': feature_cols, 'importance': importance})
+    feat_importance = feat_importance.sort_values('importance', ascending=False)
+    
+    fig = px.bar(feat_importance, x='feature', y='importance', title='Feature Importance')
+    st.plotly_chart(fig)
+    
+    # Time series plot
+    fig = make_subplots(specs=[[{"secondary_y": True}]])
+    fig.add_trace(go.Scatter(x=filtered_data['DateTime'], y=filtered_data[target_col], name=target_col))
+    for feature in feature_cols:
+        fig.add_trace(go.Scatter(x=filtered_data['DateTime'], y=filtered_data[feature], name=feature, visible='legendonly'))
+    fig.update_layout(title=f'{target_col} and Selected Features Over Time')
+    st.plotly_chart(fig)
+    
+    # LLM explanation
+    st.header("Ask for Explanation")
+    user_question = st.text_input("What would you like to know about the analysis?")
+    if user_question:
+        prompt = f"""
+        The machine learning model analyzed manufacturing process data with the following results:
+        - Target variable: {target_col}
+        - Features used: {', '.join(feature_cols)}
+        - Model R² Score: {score:.2f}
+        - Top important features: {', '.join(feat_importance['feature'].head().tolist())}
         
-        # Visualisierung der NaN-Werte
-        fig = px.bar(nan_info, x=nan_info.index, y='NaN Percentage', 
-                     title='Prozentsatz der NaN-Werte pro Spalte')
-        fig.update_layout(xaxis_title='Spalten', yaxis_title='Prozentsatz der NaN-Werte')
-        st.plotly_chart(fig, use_container_width=True)
-    else:
-        st.write("Keine NaN-Werte in den Daten gefunden.")
-
-    # Spalten auswählen
-    time_col = st.selectbox("Wählen Sie die Zeitspalte", data.columns)
-    temp_col = st.selectbox("Wählen Sie die Temperaturspalte", data.columns)
-    humidity_col = st.selectbox("Wählen Sie die Luftfeuchtigkeitsspalte", data.columns)
-    quality_cols = st.multiselect("Wählen Sie die Qualitätsspalten", data.columns)
-
-    if time_col and temp_col and humidity_col and quality_cols:
-        # Daten vorbereiten
-        data[time_col] = pd.to_datetime(data[time_col])
-        numeric_cols = [temp_col, humidity_col] + quality_cols
-        data[numeric_cols] = data[numeric_cols].apply(pd.to_numeric, errors='coerce')
-
-        # Dashboard erstellen
-        st.header("Datenanalyse Dashboard")
-
-        # Zeitreihen-Plot
-        st.subheader("Zeitreihen-Analyse")
-        fig = make_subplots(specs=[[{"secondary_y": True}]])
-        fig.add_trace(go.Scatter(x=data[time_col], y=data[temp_col], name="Temperatur"), secondary_y=False)
-        fig.add_trace(go.Scatter(x=data[time_col], y=data[humidity_col], name="Luftfeuchtigkeit"), secondary_y=True)
-        fig.update_layout(title_text="Temperatur und Luftfeuchtigkeit über Zeit")
-        fig.update_xaxes(title_text="Zeit")
-        fig.update_yaxes(title_text="Temperatur", secondary_y=False)
-        fig.update_yaxes(title_text="Luftfeuchtigkeit", secondary_y=True)
-        st.plotly_chart(fig, use_container_width=True)
-
-        # Korrelationsmatrix
-        st.subheader("Korrelationsanalyse")
-        corr_matrix = data[numeric_cols].corr()
-        fig = px.imshow(corr_matrix, text_auto=True, aspect="auto")
-        fig.update_layout(title_text="Korrelationsmatrix")
-        st.plotly_chart(fig, use_container_width=True)
-
-        # Streudiagramme
-        st.subheader("Streudiagramme")
-        for quality_col in quality_cols:
-            fig = make_subplots(rows=1, cols=2)
-            fig.add_trace(go.Scatter(x=data[temp_col], y=data[quality_col], mode='markers', name="vs Temperatur"), row=1, col=1)
-            fig.add_trace(go.Scatter(x=data[humidity_col], y=data[quality_col], mode='markers', name="vs Luftfeuchtigkeit"), row=1, col=2)
-            fig.update_layout(title_text=f"Qualität ({quality_col}) vs Temperatur und Luftfeuchtigkeit")
-            fig.update_xaxes(title_text="Temperatur", row=1, col=1)
-            fig.update_xaxes(title_text="Luftfeuchtigkeit", row=1, col=2)
-            fig.update_yaxes(title_text=quality_col)
-            st.plotly_chart(fig, use_container_width=True)
-
-        # Statistische Zusammenfassung
-        st.subheader("Statistische Zusammenfassung")
-        st.write(data[numeric_cols].describe())
-
-        # Hypothesentest
-        st.subheader("Hypothesentest: Korrelation zwischen Variablen")
-        for col1 in numeric_cols:
-            for col2 in numeric_cols:
-                if col1 != col2:
-                    correlation, p_value = stats.pearsonr(data[col1].dropna(), data[col2].dropna())
-                    st.write(f"Korrelation zwischen {col1} und {col2}: {correlation:.2f} (p-Wert: {p_value:.4f})")
+        User question: {user_question}
+        
+        Please provide a clear and concise explanation.
+        """
+        explanation = get_llm_explanation(prompt)
+        st.write(explanation)
 
 else:
-    st.write("Bitte laden Sie eine Excel-Datei hoch, um zu beginnen.")
+    st.write("Please select features and a target variable to begin the analysis.")
