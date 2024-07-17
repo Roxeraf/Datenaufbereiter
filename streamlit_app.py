@@ -7,12 +7,12 @@ from sklearn.preprocessing import StandardScaler
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from openai import OpenAI
-
-client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
+import openai
 from datetime import datetime, timedelta
+import io
 
 # Set up OpenAI API (make sure to use your API key)
+openai.api_key = st.secrets["OPENAI_API_KEY"]
 
 # Load data
 @st.cache_data
@@ -24,12 +24,14 @@ def load_data():
 # Get LLM guidance
 def get_llm_guidance(prompt):
     try:
-        response = client.chat.completions.create(model="gpt-3.5-turbo",
-        messages=[
-            {"role": "system", "content": "You are a helpful assistant guiding users through data analysis."},
-            {"role": "user", "content": prompt}
-        ])
-        return response.choices[0].message.content
+        response = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": "You are a helpful assistant guiding users through data analysis."},
+                {"role": "user", "content": prompt}
+            ]
+        )
+        return response.choices[0].message['content']
     except Exception as e:
         return f"An error occurred: {str(e)}"
 
@@ -76,16 +78,22 @@ if st.button('Process Data'):
     # Remove rows with NaT values in DateTime columns
     quality_data = quality_data.dropna(subset=['DateTime'])
     weather_data = weather_data.dropna(subset=['DateTime'])
-
+    
     # Merge data on nearest timestamp
     merged_data = pd.merge_asof(weather_data.sort_values('DateTime'), 
                                 quality_data.sort_values('DateTime'), 
                                 on='DateTime', 
                                 direction='nearest')
-
-    st.write("First few rows of merged data:", merged_data.head())
-    st.write("Merged data info:", merged_data.info())
-
+    
+    st.write("First few rows of merged data:")
+    st.write(merged_data.head())
+    
+    # Displaying DataFrame info in a text format to avoid BrokenPipeError
+    buffer = io.StringIO()
+    merged_data.info(buf=buffer)
+    s = buffer.getvalue()
+    st.text(s)
+    
     # Time frame selection
     st.sidebar.header('Time Frame Selection')
     start_date = st.sidebar.date_input('Start Date', merged_data['DateTime'].min().date())
@@ -103,20 +111,20 @@ if st.button('Process Data'):
     if feature_cols and target_col:
         X = filtered_data[feature_cols]
         y = filtered_data[target_col]
-
+        
         # Train model
         model, scaler, score = train_model(X, y)
-
+        
         st.write(f"Model R² Score: {score:.2f}")
-
+        
         # Feature importance
         importance = model.feature_importances_
         feat_importance = pd.DataFrame({'feature': feature_cols, 'importance': importance})
         feat_importance = feat_importance.sort_values('importance', ascending=False)
-
+        
         fig = px.bar(feat_importance, x='feature', y='importance', title='Feature Importance')
         st.plotly_chart(fig)
-
+        
         # Time series plot
         fig = make_subplots(specs=[[{"secondary_y": True}]])
         fig.add_trace(go.Scatter(x=filtered_data['DateTime'], y=filtered_data[target_col], name=target_col))
@@ -124,7 +132,7 @@ if st.button('Process Data'):
             fig.add_trace(go.Scatter(x=filtered_data['DateTime'], y=filtered_data[feature], name=feature, visible='legendonly'))
         fig.update_layout(title=f'{target_col} and Selected Features Over Time')
         st.plotly_chart(fig)
-
+        
         # LLM explanation
         st.header("Ask for Explanation")
         user_question = st.text_input("What would you like to know about the analysis?")
@@ -157,4 +165,3 @@ def train_model(X, y):
     score = model.score(X_test, y_test)
 
     return model, scaler, score
-
