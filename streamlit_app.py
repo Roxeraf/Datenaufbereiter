@@ -9,13 +9,19 @@ def parse_json_columns(df, json_columns):
             return json.loads(x)
         except (TypeError, json.JSONDecodeError):
             return None
+
+    parsed_dfs = []
     
     for json_column in json_columns:
         parsed_data = df[json_column].apply(try_loads)
         json_df = pd.json_normalize(parsed_data.dropna())
-        df = pd.concat([df.drop(columns=[json_column]), json_df], axis=1)
+        json_df.columns = [f"{json_column}.{col}" for col in json_df.columns]  # Prefix the columns with the original column name
+        parsed_dfs.append(json_df)
+
+    df = df.drop(columns=json_columns)  # Remove the original JSON columns
+    parsed_df = pd.concat([df] + parsed_dfs, axis=1)  # Concatenate the original dataframe with all parsed JSON dataframes
     
-    return df
+    return parsed_df
 
 st.title("File to JSON Parser")
 
@@ -46,5 +52,11 @@ if uploaded_file:
             # Option zum Herunterladen der aufbereiteten Daten
             csv = parsed_df.to_csv(index=False).encode('utf-8')
             st.download_button(label="Download as CSV", data=csv, file_name='parsed_data.csv', mime='text/csv')
+
+            # Option zum Herunterladen der aufbereiteten Daten als Excel-Datei
+            excel_buffer = pd.ExcelWriter("parsed_data.xlsx", engine='xlsxwriter')
+            parsed_df.to_excel(excel_buffer, index=False)
+            excel_buffer.save()
+            st.download_button(label="Download as Excel", data=excel_buffer, file_name='parsed_data.xlsx', mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
         except Exception as e:
             st.error(f"An error occurred: {e}")
