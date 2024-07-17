@@ -7,18 +7,15 @@ from sklearn.preprocessing import StandardScaler
 import plotly.express as px
 import io
 
-# Funktion zum Laden und Vorverarbeiten der Daten
-def load_and_preprocess_data(file):
+def load_data(file):
     file_type = file.name.split('.')[-1].lower()
     if file_type in ['xlsx', 'xls']:
-        df = pd.read_excel(file)
+        return pd.read_excel(file)
     elif file_type == 'csv':
-        df = pd.read_csv(file)
+        return pd.read_csv(file)
     else:
         raise ValueError("Unsupported file format")
-    return df
 
-# Funktion zum Trainieren des Modells
 def train_model(X, y):
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
     scaler = StandardScaler()
@@ -30,33 +27,43 @@ def train_model(X, y):
     
     return model, scaler, X_test_scaled, y_test
 
-# Funktion zur Analyse der Merkmalswichtigkeit
 def analyze_feature_importance(model, feature_names):
     importances = model.feature_importances_
     feature_importance = pd.DataFrame({'feature': feature_names, 'importance': importances})
     feature_importance = feature_importance.sort_values('importance', ascending=False)
     return feature_importance
 
-# Streamlit App
-st.title('Prozessverbesserung mit ML')
+st.title('Prozess- und Qualitätsanalyse mit ML')
 
-uploaded_file = st.file_uploader("Laden Sie Ihre Excel- oder CSV-Datei hoch", type=["xlsx", "xls", "csv"])
+process_file = st.file_uploader("Laden Sie Ihre Prozessdaten-Datei hoch", type=["xlsx", "xls", "csv"])
+quality_file = st.file_uploader("Laden Sie Ihre Qualitätsdaten-Datei hoch", type=["xlsx", "xls", "csv"])
 
-if uploaded_file is not None:
+if process_file is not None and quality_file is not None:
     try:
-        data = load_and_preprocess_data(uploaded_file)
-        st.write("Daten geladen. Form:", data.shape)
+        process_data = load_data(process_file)
+        quality_data = load_data(quality_file)
+
+        st.write("Prozessdaten geladen. Form:", process_data.shape)
+        st.write("Qualitätsdaten geladen. Form:", quality_data.shape)
+
+        # Auswahl der Schlüsselspalte für das Zusammenführen
+        process_key = st.selectbox("Wählen Sie die Schlüsselspalte für Prozessdaten", process_data.columns)
+        quality_key = st.selectbox("Wählen Sie die Schlüsselspalte für Qualitätsdaten", quality_data.columns)
+
+        # Zusammenführen der Daten
+        merged_data = pd.merge(process_data, quality_data, left_on=process_key, right_on=quality_key, how='inner')
+        st.write("Zusammengeführte Daten. Form:", merged_data.shape)
 
         # Auswahl der Zielvariable
-        target_variable = st.selectbox("Wählen Sie die Zielvariable", data.columns)
+        target_variable = st.selectbox("Wählen Sie die Zielvariable", merged_data.columns)
 
         # Auswahl der Eingabevariablen
         feature_cols = st.multiselect("Wählen Sie die Eingabevariablen", 
-                                      [col for col in data.columns if col != target_variable])
+                                      [col for col in merged_data.columns if col != target_variable])
 
         if st.button('Modell trainieren und analysieren'):
-            X = data[feature_cols]
-            y = data[target_variable]
+            X = merged_data[feature_cols]
+            y = merged_data[target_variable]
 
             model, scaler, X_test_scaled, y_test = train_model(X, y)
 
@@ -76,7 +83,7 @@ if uploaded_file is not None:
             for feature in top_features:
                 st.write(f"- Fokussieren Sie sich auf die Optimierung von '{feature}', da es einen starken Einfluss auf {target_variable} hat.")
 
-            # Partial Dependence Plot für das wichtigste Merkmal
+            # Partial Dependence Plot
             top_feature = feature_importance.iloc[0]['feature']
             pdp_feature = st.selectbox("Wählen Sie ein Merkmal für den Partial Dependence Plot", 
                                        [top_feature] + feature_cols)
@@ -89,15 +96,10 @@ if uploaded_file is not None:
             st.write(f"Der Partial Dependence Plot zeigt, wie sich Änderungen in '{pdp_feature}' auf '{target_variable}' auswirken.")
 
             # Option zum Herunterladen der Ergebnisse als Excel
-            results = pd.DataFrame({
-                'Feature': feature_importance['feature'],
-                'Importance': feature_importance['importance']
-            })
-            
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                results.to_excel(writer, index=False, sheet_name='Feature Importance')
-                data.to_excel(writer, index=False, sheet_name='Original Data')
+                feature_importance.to_excel(writer, index=False, sheet_name='Feature Importance')
+                merged_data.to_excel(writer, index=False, sheet_name='Merged Data')
             output.seek(0)
             
             st.download_button(
@@ -111,4 +113,4 @@ if uploaded_file is not None:
         st.error(f"Ein Fehler ist aufgetreten: {e}")
 
 else:
-    st.write("Bitte laden Sie eine Excel- oder CSV-Datei hoch, um zu beginnen.")
+    st.write("Bitte laden Sie sowohl die Prozess- als auch die Qualitätsdaten-Datei hoch, um zu beginnen.")
