@@ -72,11 +72,11 @@ weather_datetime_col = st.selectbox("Select the column name for datetime in weat
 
 # Initialize session state for time frame selection
 if 'start_date' not in st.session_state:
-    st.session_state['start_date'] = weather_data[weather_datetime_col].min()
+    st.session_state['start_date'] = pd.to_datetime(weather_data[weather_datetime_col].min()).date()
 if 'end_date' not in st.session_state:
-    st.session_state['end_date'] = weather_data[weather_datetime_col].max()
+    st.session_state['end_date'] = pd.to_datetime(weather_data[weather_datetime_col].max()).date()
 
-# Convert session state values to date if they are not already
+# Ensure session state values are date objects
 if isinstance(st.session_state['start_date'], str):
     st.session_state['start_date'] = pd.to_datetime(st.session_state['start_date']).date()
 if isinstance(st.session_state['end_date'], str):
@@ -183,4 +183,5 @@ def train_model(X, y):
     score = model.score(X_test, y_test)
 
     return model, scaler, score
+
 
