@@ -30,10 +30,7 @@ def align_timestamps(df1, df2, time_col1, date_col2, time_col2, tolerance_minute
                 return pd.to_datetime(ts, format='%Y-%m-%d %H:%M:%S')
         return ts
 
-    # Für df1, wo Datum und Zeit in einer Spalte sind
     df1[time_col1] = df1[time_col1].apply(parse_timestamp)
-    
-    # Für df2, wo Datum und Zeit in separaten Spalten sind
     df2['combined_datetime'] = pd.to_datetime(df2[date_col2].astype(str) + ' ' + df2[time_col2].astype(str))
     
     merged = pd.merge_asof(df1.sort_values(time_col1), 
@@ -95,84 +92,93 @@ if file1 and file2:
     st.write("Erste Datei geladen. Form:", df1.shape)
     st.write("Zweite Datei geladen. Form:", df2.shape)
 
-    # Auswahl der Zeitstempelspalte für die erste Datei
     time_col1 = st.selectbox("Wählen Sie die Zeitstempelspalte für die erste Datei", df1.columns)
-
-    # Auswahl der Datums- und Zeitspalten für die zweite Datei
     date_col2 = st.selectbox("Wählen Sie die Datumsspalte für die zweite Datei", df2.columns)
     time_col2 = st.selectbox("Wählen Sie die Zeitspalte für die zweite Datei", df2.columns)
 
-    # Toleranz für Zeitstempelabgleich
     tolerance = st.number_input("Toleranz für Zeitstempelabgleich (in Minuten)", min_value=1, value=5)
 
-    if st.button('Daten zusammenführen und analysieren'):
+    if st.button('Daten zusammenführen'):
         try:
-            # Zusammenführen der Daten
             merged_data = align_timestamps(df1, df2, time_col1, date_col2, time_col2, tolerance)
-            st.write("Zusammengeführte Daten. Form:", merged_data.shape)
-
-            # Auswahl der Zielvariablen
-            target_variables = st.multiselect("Wählen Sie die Zielvariablen", merged_data.columns)
-
-            # Auswahl der Eingabevariablen
-            feature_cols = st.multiselect("Wählen Sie die Eingabevariablen", 
-                                          [col for col in merged_data.columns if col not in target_variables])
-
-            if len(target_variables) > 0 and len(feature_cols) > 0:
-                X = merged_data[feature_cols]
-                Y = merged_data[target_variables]
-
-                models, scalers, scores, importances = train_multioutput_model(X, Y)
-
-                # Modellbewertung
-                for target, score in zip(target_variables, scores):
-                    st.write(f"Modell R²-Score für {target}: {score:.2f}")
-
-                # Merkmalswichtigkeit
-                feature_importance = analyze_feature_importance(importances, feature_cols, target_variables)
-                fig = px.bar(feature_importance, x='average_importance', y='feature', orientation='h',
-                             title='Durchschnittliche Merkmalswichtigkeit')
-                st.plotly_chart(fig)
-
-                # Verbesserungsvorschläge
-                st.subheader("Verbesserungsvorschläge:")
-                top_features = feature_importance.head(5)['feature'].tolist()
-                for feature in top_features:
-                    st.write(f"- Fokussieren Sie sich auf die Optimierung von '{feature}', da es einen starken Einfluss auf die Zielvariablen hat.")
-
-                # Partial Dependence Plots
-                for target, model, scaler in zip(target_variables, models, scalers):
-                    st.subheader(f"Partial Dependence Plot für {target}")
-                    top_feature = feature_importance.iloc[0]['feature']
-                    pdp_feature = st.selectbox(f"Wählen Sie ein Merkmal für den Partial Dependence Plot ({target})", 
-                                               [top_feature] + feature_cols)
-                    from sklearn.inspection import partial_dependence
-                    X_scaled = scaler.transform(X)
-                    pdp = partial_dependence(model, X_scaled, [list(X.columns).index(pdp_feature)])
-                    fig_pdp = px.line(x=pdp['values'][0], y=pdp['average'][0], 
-                                      labels={'x': pdp_feature, 'y': f'Partial dependence on {target}'})
-                    st.plotly_chart(fig_pdp)
-
-                    st.write(f"Der Partial Dependence Plot zeigt, wie sich Änderungen in '{pdp_feature}' auf '{target}' auswirken.")
-
-                # Option zum Herunterladen der Ergebnisse als Excel
-                output = io.BytesIO()
-                with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                    feature_importance.to_excel(writer, index=False, sheet_name='Feature Importance')
-                    merged_data.to_excel(writer, index=False, sheet_name='Merged Data')
-                output.seek(0)
-                
-                st.download_button(
-                    label="Download Ergebnisse als Excel",
-                    data=output,
-                    file_name="analysis_results.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
-            else:
-                st.warning("Bitte wählen Sie mindestens eine Zielvariable und eine Eingabevariable aus.")
-
+            st.session_state['merged_data'] = merged_data
+            st.write("Daten erfolgreich zusammengeführt. Form:", merged_data.shape)
+            st.success("Sie können nun die Zielvariablen und Eingabevariablen auswählen.")
         except Exception as e:
-            st.error(f"Ein Fehler ist aufgetreten: {e}")
+            st.error(f"Ein Fehler ist aufgetreten beim Zusammenführen der Daten: {e}")
+
+    if 'merged_data' in st.session_state:
+        merged_data = st.session_state['merged_data']
+        
+        if 'target_variables' not in st.session_state:
+            st.session_state['target_variables'] = []
+        
+        target_variables = st.multiselect(
+            "Wählen Sie die Zielvariablen",
+            options=[col for col in merged_data.columns if col not in st.session_state['target_variables']],
+            default=st.session_state['target_variables']
+        )
+        if st.button('Zielvariablen bestätigen'):
+            st.session_state['target_variables'] = target_variables
+            st.success(f"Zielvariablen ausgewählt: {', '.join(target_variables)}")
+
+        if 'feature_cols' not in st.session_state:
+            st.session_state['feature_cols'] = []
+        
+        feature_cols = st.multiselect(
+            "Wählen Sie die Eingabevariablen",
+            options=[col for col in merged_data.columns if col not in st.session_state['target_variables'] and col not in st.session_state['feature_cols']],
+            default=st.session_state['feature_cols']
+        )
+        if st.button('Eingabevariablen bestätigen'):
+            st.session_state['feature_cols'] = feature_cols
+            st.success(f"Eingabevariablen ausgewählt: {', '.join(feature_cols)}")
+
+        if st.button('Analyse starten') and st.session_state['target_variables'] and st.session_state['feature_cols']:
+            X = merged_data[st.session_state['feature_cols']]
+            Y = merged_data[st.session_state['target_variables']]
+
+            models, scalers, scores, importances = train_multioutput_model(X, Y)
+
+            for target, score in zip(st.session_state['target_variables'], scores):
+                st.write(f"Modell R²-Score für {target}: {score:.2f}")
+
+            feature_importance = analyze_feature_importance(importances, st.session_state['feature_cols'], st.session_state['target_variables'])
+            fig = px.bar(feature_importance, x='average_importance', y='feature', orientation='h',
+                         title='Durchschnittliche Merkmalswichtigkeit')
+            st.plotly_chart(fig)
+
+            st.subheader("Verbesserungsvorschläge:")
+            top_features = feature_importance.head(5)['feature'].tolist()
+            for feature in top_features:
+                st.write(f"- Fokussieren Sie sich auf die Optimierung von '{feature}', da es einen starken Einfluss auf die Zielvariablen hat.")
+
+            for target, model, scaler in zip(st.session_state['target_variables'], models, scalers):
+                st.subheader(f"Partial Dependence Plot für {target}")
+                top_feature = feature_importance.iloc[0]['feature']
+                pdp_feature = st.selectbox(f"Wählen Sie ein Merkmal für den Partial Dependence Plot ({target})", 
+                                           [top_feature] + st.session_state['feature_cols'])
+                from sklearn.inspection import partial_dependence
+                X_scaled = scaler.transform(X)
+                pdp = partial_dependence(model, X_scaled, [list(X.columns).index(pdp_feature)])
+                fig_pdp = px.line(x=pdp['values'][0], y=pdp['average'][0], 
+                                  labels={'x': pdp_feature, 'y': f'Partial dependence on {target}'})
+                st.plotly_chart(fig_pdp)
+
+                st.write(f"Der Partial Dependence Plot zeigt, wie sich Änderungen in '{pdp_feature}' auf '{target}' auswirken.")
+
+            output = io.BytesIO()
+            with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                feature_importance.to_excel(writer, index=False, sheet_name='Feature Importance')
+                merged_data.to_excel(writer, index=False, sheet_name='Merged Data')
+            output.seek(0)
+            
+            st.download_button(
+                label="Download Ergebnisse als Excel",
+                data=output,
+                file_name="analysis_results.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
 
 else:
     st.write("Bitte laden Sie beide Dateien hoch, um zu beginnen.")
