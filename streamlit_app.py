@@ -254,5 +254,16 @@ if file1 and file2:
                     merged_data.to_excel(writer, index=False, sheet_name='Merged Data')
                 output.seek(0)
                 
-                st.download_button(
+               st.download_button(
                     label="Download Ergebnisse als Excel",
+                    data=output,
+                    file_name="analysis_results.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+
+            except Exception as e:
+                st.error(f"Ein Fehler ist während der Analyse aufgetreten: {str(e)}")
+                st.write("Bitte überprüfen Sie Ihre Daten und stellen Sie sicher, dass alle ausgewählten Variablen numerisch sind und keine fehlenden Werte enthalten.")
+
+else:
+    st.write("Bitte laden Sie beide Dateien hoch, um zu beginnen.")
