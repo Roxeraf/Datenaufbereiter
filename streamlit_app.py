@@ -7,12 +7,11 @@ from sklearn.preprocessing import StandardScaler
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from openai import OpenAI
-
-client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
+import openai
 from datetime import datetime, timedelta
 
 # Set up OpenAI API (make sure to use your API key)
+openai.api_key = st.secrets["OPENAI_API_KEY"]
 
 # Load data
 @st.cache_data
@@ -24,12 +23,14 @@ def load_data():
 # Get LLM guidance
 def get_llm_guidance(prompt):
     try:
-        response = client.chat.completions.create(model="gpt-3.5-turbo",
-        messages=[
-            {"role": "system", "content": "You are a helpful assistant guiding users through data analysis."},
-            {"role": "user", "content": prompt}
-        ])
-        return response.choices[0].message.content
+        response = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": "You are a helpful assistant guiding users through data analysis."},
+                {"role": "user", "content": prompt}
+            ]
+        )
+        return response.choices[0].message['content']
     except Exception as e:
         return f"An error occurred: {str(e)}"
 
@@ -64,24 +65,24 @@ guidance = get_llm_guidance(guidance_prompt)
 st.write(guidance)
 
 # User input based on LLM guidance
-quality_date_col = st.text_input("Enter the column name for date in quality data:")
-quality_time_col = st.text_input("Enter the column name for time in quality data:")
-weather_datetime_col = st.text_input("Enter the column name for datetime in weather data:")
+quality_date_col = st.selectbox("Select the column name for date in quality data:", quality_data.columns)
+quality_time_col = st.selectbox("Select the column name for time in quality data:", quality_data.columns)
+weather_datetime_col = st.selectbox("Select the column name for datetime in weather data:", weather_data.columns)
 
 if st.button('Process Data'):
     # Preprocess data
     quality_data['DateTime'] = pd.to_datetime(quality_data[quality_date_col].astype(str) + ' ' + quality_data[quality_time_col].astype(str), errors='coerce')
     weather_data['DateTime'] = pd.to_datetime(weather_data[weather_datetime_col], errors='coerce')
-
+    
     # Merge data on nearest timestamp
     merged_data = pd.merge_asof(weather_data.sort_values('DateTime'), 
                                 quality_data.sort_values('DateTime'), 
                                 on='DateTime', 
                                 direction='nearest')
-
+    
     st.write("First few rows of merged data:", merged_data.head())
     st.write("Merged data info:", merged_data.info())
-
+    
     # Time frame selection
     st.sidebar.header('Time Frame Selection')
     start_date = st.sidebar.date_input('Start Date', merged_data['DateTime'].min().date())
@@ -99,20 +100,20 @@ if st.button('Process Data'):
     if feature_cols and target_col:
         X = filtered_data[feature_cols]
         y = filtered_data[target_col]
-
+        
         # Train model
         model, scaler, score = train_model(X, y)
-
+        
         st.write(f"Model R² Score: {score:.2f}")
-
+        
         # Feature importance
         importance = model.feature_importances_
         feat_importance = pd.DataFrame({'feature': feature_cols, 'importance': importance})
         feat_importance = feat_importance.sort_values('importance', ascending=False)
-
+        
         fig = px.bar(feat_importance, x='feature', y='importance', title='Feature Importance')
         st.plotly_chart(fig)
-
+        
         # Time series plot
         fig = make_subplots(specs=[[{"secondary_y": True}]])
         fig.add_trace(go.Scatter(x=filtered_data['DateTime'], y=filtered_data[target_col], name=target_col))
@@ -120,7 +121,7 @@ if st.button('Process Data'):
             fig.add_trace(go.Scatter(x=filtered_data['DateTime'], y=filtered_data[feature], name=feature, visible='legendonly'))
         fig.update_layout(title=f'{target_col} and Selected Features Over Time')
         st.plotly_chart(fig)
-
+        
         # LLM explanation
         st.header("Ask for Explanation")
         user_question = st.text_input("What would you like to know about the analysis?")
@@ -141,6 +142,7 @@ if st.button('Process Data'):
 
     else:
         st.write("Please select features and a target variable to begin the analysis.")
+
 # Funktion zum Trainieren des Modells
 def train_model(X, y):
     scaler = StandardScaler()
