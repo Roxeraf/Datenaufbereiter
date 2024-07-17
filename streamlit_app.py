@@ -7,13 +7,12 @@ from sklearn.preprocessing import StandardScaler
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from openai import OpenAI
-
-client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
+import openai
 from datetime import datetime, timedelta
 import io
 
 # Set up OpenAI API (make sure to use your API key)
+openai.api_key = st.secrets["OPENAI_API_KEY"]
 
 # Load data
 @st.cache_data
@@ -25,12 +24,14 @@ def load_data():
 # Get LLM guidance
 def get_llm_guidance(prompt):
     try:
-        response = client.chat.completions.create(model="gpt-3.5-turbo",
-        messages=[
-            {"role": "system", "content": "You are a helpful assistant guiding users through data analysis."},
-            {"role": "user", "content": prompt}
-        ])
-        return response.choices[0].message.content
+        response = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": "You are a helpful assistant guiding users through data analysis."},
+                {"role": "user", "content": prompt}
+            ]
+        )
+        return response.choices[0].message['content']
     except Exception as e:
         return f"An error occurred: {str(e)}"
 
@@ -69,7 +70,28 @@ quality_date_col = st.selectbox("Select the column name for date in quality data
 quality_time_col = st.selectbox("Select the column name for time in quality data:", quality_data.columns)
 weather_datetime_col = st.selectbox("Select the column name for datetime in weather data:", weather_data.columns)
 
-if st.button('Process Data'):
+# Initialize session state for time frame selection
+if 'start_date' not in st.session_state:
+    st.session_state['start_date'] = weather_data[weather_datetime_col].min()
+if 'end_date' not in st.session_state:
+    st.session_state['end_date'] = weather_data[weather_datetime_col].max()
+
+# Time frame selection
+st.sidebar.header('Time Frame Selection')
+start_date = st.sidebar.date_input('Start Date', st.session_state['start_date'])
+end_date = st.sidebar.date_input('End Date', st.session_state['end_date'])
+
+# Update session state with selected dates
+st.session_state['start_date'] = start_date
+st.session_state['end_date'] = end_date
+
+# Select features and target
+st.sidebar.header('Feature Selection')
+feature_cols = st.sidebar.multiselect('Select features', quality_data.columns)
+target_col = st.sidebar.selectbox('Select target variable', quality_data.columns)
+
+# Process Data button
+if st.sidebar.button('Process Data'):
     # Preprocess data
     quality_data['DateTime'] = pd.to_datetime(quality_data[quality_date_col].astype(str) + ' ' + quality_data[quality_time_col].astype(str), errors='coerce')
     weather_data['DateTime'] = pd.to_datetime(weather_data[weather_datetime_col], errors='coerce')
@@ -77,71 +99,53 @@ if st.button('Process Data'):
     # Remove rows with NaT values in DateTime columns
     quality_data = quality_data.dropna(subset=['DateTime'])
     weather_data = weather_data.dropna(subset=['DateTime'])
-
+    
+    # Filter data based on selected time frame
+    weather_data = weather_data[(weather_data['DateTime'] >= pd.to_datetime(st.session_state['start_date'])) & 
+                                (weather_data['DateTime'] <= pd.to_datetime(st.session_state['end_date']))]
+    quality_data = quality_data[(quality_data['DateTime'] >= pd.to_datetime(st.session_state['start_date'])) & 
+                                (quality_data['DateTime'] <= pd.to_datetime(st.session_state['end_date']))]
+    
     # Merge data on nearest timestamp
     merged_data = pd.merge_asof(weather_data.sort_values('DateTime'), 
                                 quality_data.sort_values('DateTime'), 
                                 on='DateTime', 
                                 direction='nearest')
-
+    
     st.write("First few rows of merged data:")
     st.write(merged_data.head())
-
+    
     # Displaying DataFrame info in a text format to avoid BrokenPipeError
     buffer = io.StringIO()
     merged_data.info(buf=buffer)
     s = buffer.getvalue()
     st.text(s)
 
-    # Initialize session state for time frame selection
-    if 'start_date' not in st.session_state:
-        st.session_state['start_date'] = merged_data['DateTime'].min().date()
-    if 'end_date' not in st.session_state:
-        st.session_state['end_date'] = merged_data['DateTime'].max().date()
-
-    # Time frame selection
-    st.sidebar.header('Time Frame Selection')
-    start_date = st.sidebar.date_input('Start Date', st.session_state['start_date'])
-    end_date = st.sidebar.date_input('End Date', st.session_state['end_date'])
-
-    # Update session state with selected dates
-    st.session_state['start_date'] = start_date
-    st.session_state['end_date'] = end_date
-
-    # Filter data based on selected time frame
-    filtered_data = merged_data[(merged_data['DateTime'].dt.date >= start_date) & 
-                                (merged_data['DateTime'].dt.date <= end_date)]
-
-    # Select features and target
-    st.sidebar.header('Feature Selection')
-    feature_cols = st.sidebar.multiselect('Select features', merged_data.columns)
-    target_col = st.sidebar.selectbox('Select target variable', merged_data.columns)
-
     if feature_cols and target_col:
-        X = filtered_data[feature_cols]
-        y = filtered_data[target_col]
-
+        X = merged_data[feature_cols]
+        y = merged_data[target_col]
+        
         # Train model
         model, scaler, score = train_model(X, y)
-
+        
         st.write(f"Model R² Score: {score:.2f}")
-
+        
         # Feature importance
         importance = model.feature_importances_
         feat_importance = pd.DataFrame({'feature': feature_cols, 'importance': importance})
         feat_importance = feat_importance.sort_values('importance', ascending=False)
-
+        
         fig = px.bar(feat_importance, x='feature', y='importance', title='Feature Importance')
         st.plotly_chart(fig)
-
+        
         # Time series plot
         fig = make_subplots(specs=[[{"secondary_y": True}]])
-        fig.add_trace(go.Scatter(x=filtered_data['DateTime'], y=filtered_data[target_col], name=target_col))
+        fig.add_trace(go.Scatter(x=merged_data['DateTime'], y=merged_data[target_col], name=target_col))
         for feature in feature_cols:
-            fig.add_trace(go.Scatter(x=filtered_data['DateTime'], y=filtered_data[feature], name=feature, visible='legendonly'))
+            fig.add_trace(go.Scatter(x=merged_data['DateTime'], y=merged_data[feature], name=feature, visible='legendonly'))
         fig.update_layout(title=f'{target_col} and Selected Features Over Time')
         st.plotly_chart(fig)
-
+        
         # LLM explanation
         st.header("Ask for Explanation")
         user_question = st.text_input("What would you like to know about the analysis?")
@@ -159,7 +163,6 @@ if st.button('Process Data'):
             """
             explanation = get_llm_guidance(prompt)
             st.write(explanation)
-
     else:
         st.write("Please select features and a target variable to begin the analysis.")
 
@@ -174,4 +177,5 @@ def train_model(X, y):
     score = model.score(X_test, y_test)
 
     return model, scaler, score
+
 
