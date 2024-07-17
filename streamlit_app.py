@@ -113,9 +113,10 @@ if file1 and file2:
         if 'target_variables' not in st.session_state:
             st.session_state['target_variables'] = []
         
+        all_columns = list(merged_data.columns)
         target_variables = st.multiselect(
             "Wählen Sie die Zielvariablen",
-            options=[col for col in merged_data.columns if col not in st.session_state['target_variables']],
+            options=all_columns,
             default=st.session_state['target_variables']
         )
         if st.button('Zielvariablen bestätigen'):
@@ -127,7 +128,7 @@ if file1 and file2:
         
         feature_cols = st.multiselect(
             "Wählen Sie die Eingabevariablen",
-            options=[col for col in merged_data.columns if col not in st.session_state['target_variables'] and col not in st.session_state['feature_cols']],
+            options=[col for col in all_columns if col not in target_variables],
             default=st.session_state['feature_cols']
         )
         if st.button('Eingabevariablen bestätigen'):
