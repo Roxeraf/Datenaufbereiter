@@ -254,7 +254,7 @@ if file1 and file2:
                     merged_data.to_excel(writer, index=False, sheet_name='Merged Data')
                 output.seek(0)
                 
-               st.download_button(
+                st.download_button(
                     label="Download Ergebnisse als Excel",
                     data=output,
                     file_name="analysis_results.xlsx",
