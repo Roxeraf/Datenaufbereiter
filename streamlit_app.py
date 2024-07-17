@@ -1,90 +1,105 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
-from sklearn.ensemble import RandomForestRegressor
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler
 import plotly.express as px
-import openai
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+import numpy as np
+from scipy import stats
 
-# Konfiguration für OpenAI API
-openai.api_key = st.secrets["OPENAI_API_KEY"]
+st.set_page_config(page_title="Datenanalyse Dashboard", layout="wide")
 
+@st.cache_data
 def load_data(file):
-    file_type = file.name.split('.')[-1].lower()
-    if file_type == 'csv':
-        return pd.read_csv(file)
-    elif file_type in ['xlsx', 'xls']:
-        return pd.read_excel(file)
+    return pd.read_excel(file, engine='openpyxl')
+
+def display_nan_info(df):
+    nan_counts = df.isna().sum()
+    nan_percentages = (nan_counts / len(df)) * 100
+    nan_info = pd.DataFrame({
+        'NaN Count': nan_counts,
+        'NaN Percentage': nan_percentages
+    })
+    nan_info = nan_info[nan_info['NaN Count'] > 0].sort_values('NaN Count', ascending=False)
+    return nan_info
+
+st.title('Datenanalyse Dashboard für Temperatur, Luftfeuchtigkeit und Qualität')
+
+uploaded_file = st.file_uploader("Laden Sie Ihre Excel-Datei hoch", type="xlsx")
+
+if uploaded_file is not None:
+    data = load_data(uploaded_file)
+    st.write("Daten erfolgreich geladen. Form:", data.shape)
+
+    # NaN-Informationen anzeigen
+    st.subheader("NaN-Werte in den Daten")
+    nan_info = display_nan_info(data)
+    if not nan_info.empty:
+        st.write(nan_info)
+        
+        # Visualisierung der NaN-Werte
+        fig = px.bar(nan_info, x=nan_info.index, y='NaN Percentage', 
+                     title='Prozentsatz der NaN-Werte pro Spalte')
+        fig.update_layout(xaxis_title='Spalten', yaxis_title='Prozentsatz der NaN-Werte')
+        st.plotly_chart(fig, use_container_width=True)
     else:
-        raise ValueError("Unsupported file format. Please upload a CSV or Excel file.")
+        st.write("Keine NaN-Werte in den Daten gefunden.")
 
-def get_llm_preprocessing_steps(df):
-    # ... [Funktion bleibt unverändert] ...
+    # Spalten auswählen
+    time_col = st.selectbox("Wählen Sie die Zeitspalte", data.columns)
+    temp_col = st.selectbox("Wählen Sie die Temperaturspalte", data.columns)
+    humidity_col = st.selectbox("Wählen Sie die Luftfeuchtigkeitsspalte", data.columns)
+    quality_cols = st.multiselect("Wählen Sie die Qualitätsspalten", data.columns)
 
-def apply_preprocessing(df, preprocessing_steps):
-    # ... [Funktion bleibt unverändert] ...
+    if time_col and temp_col and humidity_col and quality_cols:
+        # Daten vorbereiten
+        data[time_col] = pd.to_datetime(data[time_col])
+        numeric_cols = [temp_col, humidity_col] + quality_cols
+        data[numeric_cols] = data[numeric_cols].apply(pd.to_numeric, errors='coerce')
 
-def train_model(X, y):
-    # ... [Funktion bleibt unverändert] ...
+        # Dashboard erstellen
+        st.header("Datenanalyse Dashboard")
 
-st.title('ML-Modell mit LLM-unterstützter Datenvorverarbeitung')
+        # Zeitreihen-Plot
+        st.subheader("Zeitreihen-Analyse")
+        fig = make_subplots(specs=[[{"secondary_y": True}]])
+        fig.add_trace(go.Scatter(x=data[time_col], y=data[temp_col], name="Temperatur"), secondary_y=False)
+        fig.add_trace(go.Scatter(x=data[time_col], y=data[humidity_col], name="Luftfeuchtigkeit"), secondary_y=True)
+        fig.update_layout(title_text="Temperatur und Luftfeuchtigkeit über Zeit")
+        fig.update_xaxes(title_text="Zeit")
+        fig.update_yaxes(title_text="Temperatur", secondary_y=False)
+        fig.update_yaxes(title_text="Luftfeuchtigkeit", secondary_y=True)
+        st.plotly_chart(fig, use_container_width=True)
 
-# Erstellen Sie drei optionale File Uploader
-uploaded_files = []
-for i in range(3):
-    file = st.file_uploader(f"Laden Sie Datei {i+1} hoch (optional)", type=["csv", "xlsx", "xls"], key=f"file_{i}")
-    if file is not None:
-        uploaded_files.append(file)
+        # Korrelationsmatrix
+        st.subheader("Korrelationsanalyse")
+        corr_matrix = data[numeric_cols].corr()
+        fig = px.imshow(corr_matrix, text_auto=True, aspect="auto")
+        fig.update_layout(title_text="Korrelationsmatrix")
+        st.plotly_chart(fig, use_container_width=True)
 
-if uploaded_files:
-    try:
-        # Laden und Zusammenführen der Daten
-        dataframes = [load_data(file) for file in uploaded_files]
-        data = pd.concat(dataframes, ignore_index=True)
-        st.write(f"Daten aus {len(uploaded_files)} Datei(en) geladen und zusammengeführt. Form:", data.shape)
+        # Streudiagramme
+        st.subheader("Streudiagramme")
+        for quality_col in quality_cols:
+            fig = make_subplots(rows=1, cols=2)
+            fig.add_trace(go.Scatter(x=data[temp_col], y=data[quality_col], mode='markers', name="vs Temperatur"), row=1, col=1)
+            fig.add_trace(go.Scatter(x=data[humidity_col], y=data[quality_col], mode='markers', name="vs Luftfeuchtigkeit"), row=1, col=2)
+            fig.update_layout(title_text=f"Qualität ({quality_col}) vs Temperatur und Luftfeuchtigkeit")
+            fig.update_xaxes(title_text="Temperatur", row=1, col=1)
+            fig.update_xaxes(title_text="Luftfeuchtigkeit", row=1, col=2)
+            fig.update_yaxes(title_text=quality_col)
+            st.plotly_chart(fig, use_container_width=True)
 
-        if st.button('Datenvorverarbeitung starten'):
-            preprocessing_steps = get_llm_preprocessing_steps(data)
-            st.subheader("Vorgeschlagene Vorverarbeitungsschritte:")
-            st.code(preprocessing_steps)
+        # Statistische Zusammenfassung
+        st.subheader("Statistische Zusammenfassung")
+        st.write(data[numeric_cols].describe())
 
-            if st.button('Vorverarbeitung anwenden'):
-                data = apply_preprocessing(data, preprocessing_steps)
-                st.write("Daten nach Vorverarbeitung. Form:", data.shape)
-
-        target_variable = st.selectbox("Wählen Sie die Zielvariable", data.columns)
-        feature_cols = st.multiselect("Wählen Sie die Eingabevariablen", 
-                                      [col for col in data.columns if col != target_variable])
-
-        if st.button('Modell trainieren'):
-            if not feature_cols:
-                st.error("Bitte wählen Sie mindestens eine Eingabevariable aus.")
-            else:
-                X = data[feature_cols]
-                y = data[target_variable]
-
-                model, scaler, score = train_model(X, y)
-
-                st.subheader("Modellergebnisse")
-                st.write(f"R²-Score: {score:.2f}")
-
-                importance = model.feature_importances_
-                fig = px.bar(x=importance, y=feature_cols, orientation='h', title='Feature Importance')
-                st.plotly_chart(fig)
-
-                # Optional: Vorhersagen
-                if st.checkbox("Vorhersagen machen"):
-                    input_data = {}
-                    for feature in feature_cols:
-                        input_data[feature] = st.number_input(f"Geben Sie einen Wert für {feature} ein")
-                    
-                    input_df = pd.DataFrame([input_data])
-                    prediction = model.predict(scaler.transform(input_df))
-                    st.write(f"Vorhersage für {target_variable}: {prediction[0]:.2f}")
-
-    except Exception as e:
-        st.error(f"Fehler beim Laden oder Verarbeiten der Dateien: {str(e)}")
+        # Hypothesentest
+        st.subheader("Hypothesentest: Korrelation zwischen Variablen")
+        for col1 in numeric_cols:
+            for col2 in numeric_cols:
+                if col1 != col2:
+                    correlation, p_value = stats.pearsonr(data[col1].dropna(), data[col2].dropna())
+                    st.write(f"Korrelation zwischen {col1} und {col2}: {correlation:.2f} (p-Wert: {p_value:.4f})")
 
 else:
-    st.write("Bitte laden Sie mindestens eine CSV- oder Excel-Datei hoch, um zu beginnen.")
+    st.write("Bitte laden Sie eine Excel-Datei hoch, um zu beginnen.")
