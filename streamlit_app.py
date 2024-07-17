@@ -10,13 +10,15 @@ def parse_json_columns(df, json_columns):
         except (TypeError, json.JSONDecodeError):
             return None
 
+    parsed_dfs = [df.drop(columns=json_columns)]
     for json_column in json_columns:
         parsed_data = df[json_column].apply(try_loads)
         json_df = pd.json_normalize(parsed_data)
         json_df.columns = [f"{json_column}.{col}" for col in json_df.columns]
-        df = df.drop(columns=[json_column]).join(json_df, how='left')
+        parsed_dfs.append(json_df)
     
-    return df
+    parsed_df = pd.concat(parsed_dfs, axis=1)
+    return parsed_df
 
 st.title("File to JSON Parser")
 
