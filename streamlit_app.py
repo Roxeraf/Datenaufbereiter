@@ -4,6 +4,7 @@ import numpy as np
 from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.preprocessing import StandardScaler
+from sklearn.inspection import partial_dependence
 import plotly.express as px
 import io
 from datetime import datetime, timedelta
@@ -79,6 +80,31 @@ def analyze_feature_importance(importances, feature_names, target_names):
     feature_importance['average_importance'] = feature_importance.iloc[:, 1:].mean(axis=1)
     feature_importance = feature_importance.sort_values('average_importance', ascending=False)
     return feature_importance
+
+def explain_model_results(feature_importance, scores, target_variables):
+    explanation = "Modellauswertung:\n\n"
+    
+    for target, score in zip(target_variables, scores):
+        explanation += f"Für die Zielvariable '{target}' hat das Modell einen R²-Score von {score:.2f}. "
+        if score > 0.7:
+            explanation += "Dies deutet auf eine gute Vorhersagekraft des Modells hin.\n"
+        elif score > 0.5:
+            explanation += "Dies deutet auf eine moderate Vorhersagekraft des Modells hin.\n"
+        else:
+            explanation += "Dies deutet auf eine schwache Vorhersagekraft des Modells hin. Möglicherweise fehlen wichtige Einflussfaktoren oder die Beziehung ist nicht linear.\n"
+    
+    explanation += "\nWichtigste Einflussfaktoren:\n"
+    top_features = feature_importance.head(5)['feature'].tolist()
+    for i, feature in enumerate(top_features, 1):
+        explanation += f"{i}. {feature}: Dieses Merkmal hat einen starken Einfluss auf die Zielvariablen. "
+        explanation += "Eine Optimierung dieses Faktors könnte zu signifikanten Verbesserungen führen.\n"
+    
+    explanation += "\nEmpfehlungen:\n"
+    explanation += "1. Konzentrieren Sie sich auf die Optimierung der oben genannten Top-Einflussfaktoren.\n"
+    explanation += "2. Untersuchen Sie die Partial Dependence Plots, um zu verstehen, wie Änderungen in diesen Faktoren die Zielvariablen beeinflussen.\n"
+    explanation += "3. Wenn die Modellleistung niedrig ist, erwägen Sie die Sammlung zusätzlicher relevanter Daten oder die Anwendung fortgeschrittener Modellierungstechniken.\n"
+    
+    return explanation
 
 st.title('Optimierte Prozess- und Qualitätsanalyse mit ML')
 
@@ -160,35 +186,67 @@ if file1 and file2:
             st.write(f"Eingabevariablen (X) Form: {X.shape}")
             st.write(f"Zielvariablen (Y) Form: {Y.shape}")
 
+            # Zusätzliche Überprüfungen
+            st.write("Datenübersicht vor dem Modelltraining:")
+            for col in X.columns:
+                st.write(f"{col}: Typ {X[col].dtype}, Nicht-Null: {X[col].count()}, Unique: {X[col].nunique()}")
+            for col in Y.columns:
+                st.write(f"{col}: Typ {Y[col].dtype}, Nicht-Null: {Y[col].count()}, Unique: {Y[col].nunique()}")
+
+            # Überprüfen Sie auf konstante Spalten
+            constant_cols_X = [col for col in X.columns if X[col].nunique() <= 1]
+            constant_cols_Y = [col for col in Y.columns if Y[col].nunique() <= 1]
+            if constant_cols_X:
+                st.warning(f"Konstante Spalten in X gefunden: {constant_cols_X}")
+            if constant_cols_Y:
+                st.warning(f"Konstante Spalten in Y gefunden: {constant_cols_Y}")
+
             try:
                 models, scalers, scores, importances = train_multioutput_model(X, Y)
 
-                for target, score in zip(st.session_state['target_variables'], scores):
-                    st.write(f"Modell R²-Score für {target}: {score:.2f}")
-
                 feature_importance = analyze_feature_importance(importances, st.session_state['feature_cols'], st.session_state['target_variables'])
+                
+                # Erklärung der Modellergebnisse
+                explanation = explain_model_results(feature_importance, scores, st.session_state['target_variables'])
+                st.subheader("Modellauswertung und Erklärung")
+                st.write(explanation)
+
                 fig = px.bar(feature_importance, x='average_importance', y='feature', orientation='h',
                              title='Durchschnittliche Merkmalswichtigkeit')
                 st.plotly_chart(fig)
-
-                st.subheader("Verbesserungsvorschläge:")
-                top_features = feature_importance.head(5)['feature'].tolist()
-                for feature in top_features:
-                    st.write(f"- Fokussieren Sie sich auf die Optimierung von '{feature}', da es einen starken Einfluss auf die Zielvariablen hat.")
 
                 for target, model, scaler in zip(st.session_state['target_variables'], models, scalers):
                     st.subheader(f"Partial Dependence Plot für {target}")
                     top_feature = feature_importance.iloc[0]['feature']
                     pdp_feature = st.selectbox(f"Wählen Sie ein Merkmal für den Partial Dependence Plot ({target})", 
                                                [top_feature] + st.session_state['feature_cols'])
-                    from sklearn.inspection import partial_dependence
-                    X_scaled = scaler.transform(X)
-                    pdp = partial_dependence(model, X_scaled, [list(X.columns).index(pdp_feature)])
-                    fig_pdp = px.line(x=pdp['values'][0], y=pdp['average'][0], 
-                                      labels={'x': pdp_feature, 'y': f'Partial dependence on {target}'})
-                    st.plotly_chart(fig_pdp)
-
-                    st.write(f"Der Partial Dependence Plot zeigt, wie sich Änderungen in '{pdp_feature}' auf '{target}' auswirken.")
+                    try:
+                        X_scaled = scaler.transform(X)
+                        pdp_result = partial_dependence(model, X_scaled, [list(X.columns).index(pdp_feature)])
+                        
+                        st.write("PDP Ergebnis Struktur:", pdp_result.keys())
+                        
+                        if 'values' in pdp_result and 'average' in pdp_result:
+                            fig_pdp = px.line(x=pdp_result['values'][0], y=pdp_result['average'][0], 
+                                              labels={'x': pdp_feature, 'y': f'Partial dependence on {target}'})
+                            st.plotly_chart(fig_pdp)
+                            st.write(f"Der Partial Dependence Plot zeigt, wie sich Änderungen in '{pdp_feature}' auf '{target}' auswirken.")
+                        else:
+                            st.warning(f"Unerwartete Struktur der PDP-Ergebnisse für {target}. Überspringe Plot.")
+                        
+                        st.write("Datenübersicht für dieses Modell:")
+                        st.write(f"X Shape: {X.shape}")
+                        st.write(f"Y Shape für {target}: {Y[target].shape}")
+                        st.write(f"Nicht-null Werte in Y für {target}: {Y[target].count()}")
+                        st.write(f"Unique Werte in Y für {target}: {Y[target].nunique()}")
+                        
+                    except Exception as e:
+                        st.error(f"Fehler beim Erstellen des Partial Dependence Plots für {target}: {str(e)}")
+                        st.write("Debug-Informationen:")
+                        st.write(f"Ausgewähltes Feature: {pdp_feature}")
+                        st.write(f"Feature-Index: {list(X.columns).index(pdp_feature)}")
+                        st.write(f"X Datentypen: {X.dtypes}")
+                        st.write(f"Y Datentyp für {target}: {Y[target].dtype}")
 
                 output = io.BytesIO()
                 with pd.ExcelWriter(output, engine='openpyxl') as writer:
@@ -198,13 +256,3 @@ if file1 and file2:
                 
                 st.download_button(
                     label="Download Ergebnisse als Excel",
-                    data=output,
-                    file_name="analysis_results.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
-            except Exception as e:
-                st.error(f"Ein Fehler ist während der Analyse aufgetreten: {str(e)}")
-                st.write("Bitte überprüfen Sie Ihre Daten und stellen Sie sicher, dass alle ausgewählten Variablen numerisch sind und keine fehlenden Werte enthalten.")
-
-else:
-    st.write("Bitte laden Sie beide Dateien hoch, um zu beginnen.")
